@@ -1,0 +1,21 @@
+# Virtual environments
+defect_env/
+defect_env_gpu/
+
+# CVAT
+cvat/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

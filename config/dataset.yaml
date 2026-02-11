@@ -1,0 +1,19 @@
+# Defect Detection Dataset Configuration
+# For YOLOv11m Training
+
+# Dataset paths (update these to your actual paths)
+path: C:/Users/RohithSuryaCKM/Downloads/Projects/Image_detection/dataset
+train: images/train
+val: images/val
+test: images/test
+
+# Class names - update based on your defect types
+names:
+  0: scratch
+  1: crack
+  2: dent
+  3: discoloration
+  4: contamination
+
+# Number of classes
+nc: 5

@@ -1,0 +1,28 @@
+{
+    "camera": {
+        "exposure_time_us": 15000,
+        "gain_db": 0,
+        "pixel_format": "Mono8",
+        "trigger_mode": "Software",
+        "timeout_ms": 5000
+    },
+    "model": {
+        "weights_path": "models/best.pt",
+        "confidence_threshold": 0.5,
+        "iou_threshold": 0.45,
+        "image_size": 640
+    },
+    "inspection": {
+        "save_images": true,
+        "save_path": "logs/inspections",
+        "log_to_database": true,
+        "database_path": "logs/inspections.db"
+    },
+    "classes": [
+        "scratch",
+        "crack", 
+        "dent",
+        "discoloration",
+        "contamination"
+    ]
+}
