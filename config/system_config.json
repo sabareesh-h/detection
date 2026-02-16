@@ -19,10 +19,8 @@
         "database_path": "logs/inspections.db"
     },
     "classes": [
-        "scratch",
-        "crack", 
-        "dent",
-        "discoloration",
-        "contamination"
+        "Good",
+        "Flat_line",
+        "Unwash"
     ]
 }

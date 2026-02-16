@@ -1,0 +1,216 @@
+"""
+Dataset Preparation Script
+Merges CVAT YOLO exports with original images into a unified YOLO dataset structure.
+Then splits into train/val/test sets.
+"""
+
+import os
+import shutil
+from pathlib import Path
+from collections import Counter
+import random
+
+# ============================================================
+# CONFIGURATION - Update these paths if needed
+# ============================================================
+PROJECT_ROOT = Path(r"C:\Users\RohithSuryaCKM\Downloads\Projects\Image_detection")
+
+# CVAT annotation exports (contain .txt label files)
+ANNOTATION_SOURCES = [
+    {
+        "labels_dir": PROJECT_ROOT / "task_4_annotations_2026_02_16_06_17_16_yolo 1.1" / "obj_Train_data" / "Good" / "Image_processing",
+        "images_dir": PROJECT_ROOT / "Good" / "Image_processing",
+        "description": "Task 4 - Good images"
+    },
+    {
+        "labels_dir": PROJECT_ROOT / "task_5_annotations_2026_02_16_06_26_29_yolo 1.1" / "obj_Train_data" / "Automation",
+        "images_dir": PROJECT_ROOT / "Automation -20260216T061857Z-1-001" / "Automation",
+        "description": "Task 5 - Automation (defect) images"
+    },
+    {
+        "labels_dir": PROJECT_ROOT / "task_6_annotations" / "obj_Train_data" / "Classroom",
+        "images_dir": PROJECT_ROOT / "Classroom" / "Classroom",
+        "description": "Task 6 - Classroom (new) images"
+    },
+]
+
+# Class names (from obj.names in your CVAT exports)
+CLASS_NAMES = {0: "Good", 1: "Flat_line", 2: "Unwash"}
+
+# Output dataset directory
+OUTPUT_DIR = PROJECT_ROOT / "dataset"
+
+# Split ratios
+TRAIN_RATIO = 0.70
+VAL_RATIO = 0.15
+TEST_RATIO = 0.15
+RANDOM_SEED = 42
+
+# ============================================================
+# STEP 1: Merge images and labels into a single raw folder
+# ============================================================
+def merge_dataset():
+    """Merge images and their corresponding label files into dataset/raw/"""
+    raw_images_dir = OUTPUT_DIR / "raw" / "images"
+    raw_labels_dir = OUTPUT_DIR / "raw" / "labels"
+    raw_images_dir.mkdir(parents=True, exist_ok=True)
+    raw_labels_dir.mkdir(parents=True, exist_ok=True)
+
+    total_images = 0
+    total_labels = 0
+    class_counts = Counter()
+
+    for source in ANNOTATION_SOURCES:
+        labels_dir = source["labels_dir"]
+        images_dir = source["images_dir"]
+        desc = source["description"]
+
+        print(f"\n--- Processing: {desc} ---")
+        print(f"  Labels from: {labels_dir}")
+        print(f"  Images from: {images_dir}")
+
+        if not labels_dir.exists():
+            print(f"  WARNING: Labels directory not found: {labels_dir}")
+            continue
+        if not images_dir.exists():
+            print(f"  WARNING: Images directory not found: {images_dir}")
+            continue
+
+        # Get all label files
+        label_files = list(labels_dir.glob("*.txt"))
+        print(f"  Found {len(label_files)} label files")
+
+        matched = 0
+        for label_file in label_files:
+            # Find corresponding image
+            stem = label_file.stem
+            image_file = None
+            for ext in [".jpg", ".jpeg", ".png", ".bmp"]:
+                candidate = images_dir / (stem + ext)
+                if candidate.exists():
+                    image_file = candidate
+                    break
+
+            if image_file is None:
+                print(f"  WARNING: No image found for label {label_file.name}")
+                continue
+
+            # Copy image and label to raw folder
+            shutil.copy2(image_file, raw_images_dir / image_file.name)
+            shutil.copy2(label_file, raw_labels_dir / label_file.name)
+            matched += 1
+            total_images += 1
+            total_labels += 1
+
+            # Count classes
+            with open(label_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        class_id = int(line.split()[0])
+                        class_counts[class_id] += 1
+
+        print(f"  Matched: {matched} image-label pairs")
+
+    print(f"\n{'='*60}")
+    print(f"MERGE COMPLETE")
+    print(f"{'='*60}")
+    print(f"Total images: {total_images}")
+    print(f"Total label files: {total_labels}")
+    print(f"\nClass distribution:")
+    for class_id, count in sorted(class_counts.items()):
+        name = CLASS_NAMES.get(class_id, f"Unknown({class_id})")
+        print(f"  Class {class_id} ({name}): {count} annotations")
+
+    return total_images
+
+
+# ============================================================
+# STEP 2: Split into train/val/test
+# ============================================================
+def split_dataset():
+    """Split the merged raw dataset into train/val/test sets"""
+    raw_images_dir = OUTPUT_DIR / "raw" / "images"
+    raw_labels_dir = OUTPUT_DIR / "raw" / "labels"
+
+    # Get all images that have matching labels
+    image_files = sorted(
+        [f for f in raw_images_dir.iterdir()
+         if f.suffix.lower() in ['.jpg', '.jpeg', '.png', '.bmp']]
+    )
+
+    print(f"\n{'='*60}")
+    print(f"SPLITTING DATASET")
+    print(f"{'='*60}")
+    print(f"Total images to split: {len(image_files)}")
+    print(f"Ratios: train={TRAIN_RATIO}, val={VAL_RATIO}, test={TEST_RATIO}")
+
+    # Shuffle with seed for reproducibility
+    random.seed(RANDOM_SEED)
+    random.shuffle(image_files)
+
+    n_total = len(image_files)
+    n_train = int(n_total * TRAIN_RATIO)
+    n_val = int(n_total * VAL_RATIO)
+
+    train_files = image_files[:n_train]
+    val_files = image_files[n_train:n_train + n_val]
+    test_files = image_files[n_train + n_val:]
+
+    splits = {
+        'train': train_files,
+        'val': val_files,
+        'test': test_files
+    }
+
+    for split_name, files in splits.items():
+        img_dir = OUTPUT_DIR / "images" / split_name
+        lbl_dir = OUTPUT_DIR / "labels" / split_name
+        img_dir.mkdir(parents=True, exist_ok=True)
+        lbl_dir.mkdir(parents=True, exist_ok=True)
+
+        for img_file in files:
+            # Copy image
+            shutil.copy2(img_file, img_dir / img_file.name)
+
+            # Copy label
+            label_file = raw_labels_dir / (img_file.stem + ".txt")
+            if label_file.exists():
+                shutil.copy2(label_file, lbl_dir / label_file.name)
+            else:
+                print(f"  WARNING: No label for {img_file.name}")
+
+        print(f"  {split_name}: {len(files)} images")
+
+    print(f"\nDataset structure created at: {OUTPUT_DIR}")
+
+
+# ============================================================
+# MAIN
+# ============================================================
+if __name__ == "__main__":
+    print("=" * 60)
+    print("DATASET PREPARATION")
+    print("=" * 60)
+
+    total = merge_dataset()
+
+    if total > 0:
+        split_dataset()
+        print(f"\n{'='*60}")
+        print("DONE! Your dataset is ready at:")
+        print(f"  {OUTPUT_DIR}")
+        print(f"\nFolder structure:")
+        print(f"  dataset/")
+        print(f"  ├── images/")
+        print(f"  │   ├── train/")
+        print(f"  │   ├── val/")
+        print(f"  │   └── test/")
+        print(f"  ├── labels/")
+        print(f"  │   ├── train/")
+        print(f"  │   ├── val/")
+        print(f"  │   └── test/")
+        print(f"  └── raw/  (merged originals)")
+        print(f"\nNext step: Update config/dataset.yaml, then run training!")
+    else:
+        print("\nERROR: No images were merged. Check your paths above.")

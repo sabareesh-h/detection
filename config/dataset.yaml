@@ -7,13 +7,11 @@ train: images/train
 val: images/val
 test: images/test
 
-# Class names - update based on your defect types
+# Class names - matching CVAT annotation labels
 names:
-  0: scratch
-  1: crack
-  2: dent
-  3: discoloration
-  4: contamination
+  0: Good
+  1: Flat_line
+  2: Unwash
 
 # Number of classes
-nc: 5
+nc: 3
