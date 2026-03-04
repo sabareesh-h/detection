@@ -1,0 +1,212 @@
+# ============================================================
+# Hyperparameter Tuning Presets for Defect Detection
+# ============================================================
+# Usage with train_model.py:
+#   Load a preset and pass values to training function.
+#   Or use Ultralytics auto-tune: yolo tune model=yolo11m.pt data=config/dataset.yaml
+#
+# Each preset includes a description of WHEN to use it
+# and WHY the values differ from baseline.
+# ============================================================
+
+
+# ---- PRESET 1: baseline ----
+# Current defaults. Use this as a reference point for all experiments.
+baseline:
+  description: "Default training config — matches current train_model.py settings"
+  when_to_use: "First training run on a new dataset, or as a control experiment"
+
+  # Training duration
+  epochs: 100
+  patience: 20
+
+  # Batch & image size
+  batch_size: 16
+  img_size: 640
+
+  # Optimizer
+  optimizer: "auto"        # Ultralytics auto-selects SGD or AdamW
+  lr0: 0.01                # Initial learning rate
+  lrf: 0.01                # Final LR = lr0 * lrf
+  momentum: 0.937
+  weight_decay: 0.0005
+  warmup_epochs: 3.0
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.1
+
+  # Augmentation
+  degrees: 15.0            # Rotation ±15°
+  translate: 0.1           # Translation ±10%
+  scale: 0.3               # Scale ±30%
+  shear: 0.0
+  perspective: 0.0
+  flipud: 0.0              # No vertical flip
+  fliplr: 0.5              # Horizontal flip 50%
+  mosaic: 1.0              # Mosaic ON
+  mixup: 0.1               # Light MixUp
+  copy_paste: 0.0
+  hsv_h: 0.015
+  hsv_s: 0.4
+  hsv_v: 0.4
+
+  # Other
+  amp: true                # Mixed precision
+  workers: 8
+
+
+# ---- PRESET 2: small_dataset ----
+# Tuned for when you have <200 images total (your current case: ~130 images).
+# Key idea: train longer, augment harder, use lower LR to avoid overfitting,
+# and increase patience since convergence is slower with few samples.
+small_dataset:
+  description: "Optimized for small datasets (<200 images) — more augmentation, lower LR"
+  when_to_use: "When total dataset is under 200 images (current scenario: ~130 images)"
+
+  # Training duration — train longer with more patience
+  epochs: 300
+  patience: 50
+
+  # Batch & image size — smaller batch = more gradient updates per epoch
+  batch_size: 8
+  img_size: 640
+
+  # Optimizer — lower LR to prevent overfitting on small data
+  optimizer: "AdamW"       # AdamW converges better on small datasets
+  lr0: 0.001               # 10x lower than baseline
+  lrf: 0.01
+  momentum: 0.937
+  weight_decay: 0.001      # Stronger regularization
+  warmup_epochs: 5.0       # Longer warmup
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.05
+
+  # Augmentation — heavier to compensate for lack of data
+  degrees: 25.0            # More rotation
+  translate: 0.15
+  scale: 0.4               # More scale variation
+  shear: 5.0               # Add light shear
+  perspective: 0.0
+  flipud: 0.0
+  fliplr: 0.5
+  mosaic: 1.0
+  mixup: 0.3               # More MixUp
+  copy_paste: 0.1          # Enable copy-paste augmentation
+  hsv_h: 0.02
+  hsv_s: 0.5
+  hsv_v: 0.5
+
+  # Other
+  amp: true
+  workers: 4               # Fewer workers to avoid data loading bottlenecks
+
+
+# ---- PRESET 3: fine_detail ----
+# For detecting small or subtle defects (fine surface scratches, hairline cracks).
+# Uses larger input images so small features are preserved at higher resolution.
+fine_detail:
+  description: "High-resolution training for small/subtle defects"
+  when_to_use: "When defects are small relative to the image, or fine surface details matter"
+
+  # Training duration
+  epochs: 150
+  patience: 30
+
+  # Batch & image size — 1280px captures more detail, but needs more GPU RAM
+  batch_size: 4            # Reduced due to larger images
+  img_size: 1280           # 2x resolution for fine details
+
+  # Optimizer
+  optimizer: "auto"
+  lr0: 0.005               # Slightly lower LR for stability at high resolution
+  lrf: 0.01
+  momentum: 0.937
+  weight_decay: 0.0005
+  warmup_epochs: 3.0
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.1
+
+  # Augmentation — moderate, preserve fine details
+  degrees: 10.0            # Less rotation to preserve orientation-sensitive defects
+  translate: 0.1
+  scale: 0.2               # Less scale variation
+  shear: 0.0
+  perspective: 0.0
+  flipud: 0.0
+  fliplr: 0.5
+  mosaic: 1.0
+  mixup: 0.05              # Very light MixUp — don't blur fine details
+  copy_paste: 0.0
+  hsv_h: 0.01
+  hsv_s: 0.3
+  hsv_v: 0.3
+
+  # Other
+  amp: true
+  workers: 4
+
+
+# ---- PRESET 4: fast_training ----
+# Quick iteration for testing pipeline changes, new augmentations, or sanity checks.
+# NOT for final model training — just to verify things work.
+fast_training:
+  description: "Quick training run for pipeline testing and sanity checks"
+  when_to_use: "When you want to verify that training works, before committing to a long run"
+
+  # Training duration — fast
+  epochs: 20
+  patience: 10
+
+  # Batch & image size
+  batch_size: 16
+  img_size: 640
+
+  # Optimizer
+  optimizer: "auto"
+  lr0: 0.01
+  lrf: 0.1
+  momentum: 0.937
+  weight_decay: 0.0005
+  warmup_epochs: 1.0
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.1
+
+  # Augmentation — light
+  degrees: 10.0
+  translate: 0.1
+  scale: 0.2
+  shear: 0.0
+  perspective: 0.0
+  flipud: 0.0
+  fliplr: 0.5
+  mosaic: 1.0
+  mixup: 0.0
+  copy_paste: 0.0
+  hsv_h: 0.015
+  hsv_s: 0.3
+  hsv_v: 0.3
+
+  # Other
+  amp: true
+  workers: 8
+
+
+# ============================================================
+# HOW TO USE ULTRALYTICS AUTO-TUNE
+# ============================================================
+# Instead of manually picking presets, you can let Ultralytics
+# search for the best hyperparameters automatically:
+#
+#   from ultralytics import YOLO
+#   model = YOLO("yolo11m.pt")
+#   model.tune(
+#       data="config/dataset.yaml",
+#       epochs=30,           # Epochs per trial
+#       iterations=50,       # Number of search trials
+#       optimizer="AdamW",
+#       plots=True,
+#       save=True,
+#   )
+#
+# This uses Ray Tune under the hood and saves the best
+# hyperparameters to runs/detect/tune/best_hyperparameters.yaml
+# ============================================================
