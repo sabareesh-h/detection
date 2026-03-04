@@ -80,6 +80,7 @@ Image_detection/
 │   ├── train_model.py            # YOLOv11m training script
 │   ├── evaluate_model.py         # Full model evaluation report
 │   ├── compare_runs.py           # Training run metrics comparison
+│   ├── run_pipeline.py           # ⭐ Master pipeline (chains all steps)
 │   ├── defect_detector.py        # Production inference pipeline
 │   ├── export_model.py           # Model export (ONNX, TensorRT, etc.)
 │   └── webcam_demo.py            # Quick webcam inference demo
@@ -178,17 +179,72 @@ nc: 3
 
 ---
 
-## 🔄 Workflow Pipeline
+## 🔄 Workflow Pipeline — Full Integration View
 
 ```
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│  1. CAPTURE  │───▶│ 2. ANNOTATE  │───▶│  3. TRAIN    │───▶│  4. DEPLOY   │
-│  Basler Cam  │    │  CVAT / RF   │    │  YOLOv11m    │    │  Real-time   │
-│  + Validate  │    │  YOLO format │    │  GPU/CPU     │    │  Inspection  │
-└──────────────┘    └──────────────┘    └──────────────┘    └──────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     DEFECT DETECTION PIPELINE                          │
+│                                                                        │
+│  PHASE 1: DATA COLLECTION                                             │
+│  ┌──────────────────┐     ┌──────────────────┐                        │
+│  │ camera_capture.py │────▶│validate_images.py│                        │
+│  │ (Basler camera)   │     │ (quality check)  │                        │
+│  └──────────────────┘     └────────┬─────────┘                        │
+│                                    │                                   │
+│  PHASE 2: DATA PREPARATION                                            │
+│  ┌──────────────────┐     ┌────────▼─────────┐    ┌────────────────┐  │
+│  │download_dataset.py│────▶│prepare_dataset.py│───▶│ split_dataset  │  │
+│  │ (Roboflow data)   │     │ (merge + clean)  │    │  (70/15/15)    │  │
+│  └──────────────────┘     └──────────────────┘    └───────┬────────┘  │
+│                                                           │            │
+│  PHASE 3: AUGMENTATION                                    │            │
+│  ┌──────────────────┐                                     │            │
+│  │augment_dataset.py │◄───────────────────────────────────┘            │
+│  │ (5x multiplier)   │   87 images ──▶ ~435 images                    │
+│  └────────┬─────────┘                                                  │
+│           │                                                            │
+│  PHASE 4: TRAINING                                                     │
+│  ┌────────▼─────────┐     ┌──────────────────┐                        │
+│  │  train_model.py   │     │ hyperparams.yaml │  ◀── pick a preset    │
+│  │  (YOLOv11m)       │◄────│ small_dataset    │                        │
+│  └────────┬─────────┘     └──────────────────┘                        │
+│           │                                                            │
+│  PHASE 5: EVALUATION                                                   │
+│  ┌────────▼─────────┐     ┌──────────────────┐                        │
+│  │evaluate_model.py  │     │ compare_runs.py  │                        │
+│  │ (mAP, F1, speed)  │     │ (compare exps)   │                        │
+│  └────────┬─────────┘     └──────────────────┘                        │
+│           │                                                            │
+│  PHASE 6: DEPLOYMENT                                                   │
+│  ┌────────▼─────────┐     ┌──────────────────┐                        │
+│  │defect_detector.py │     │ export_model.py  │                        │
+│  │ (production run)  │     │ (ONNX/TensorRT)  │                        │
+│  └──────────────────┘     └──────────────────┘                        │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Step-by-Step
+### ⭐ Master Pipeline — Run Everything with One Command
+
+`run_pipeline.py` chains all the above steps automatically.
+
+| Mode | What it Does | Command |
+|------|-------------|----------|
+| **full** | Validate → Augment → Train → Evaluate → Compare → Export | `python scripts/run_pipeline.py --mode full --preset small_dataset` |
+| **train-eval** | Train → Evaluate → Compare (skip augmentation) | `python scripts/run_pipeline.py --mode train-eval --preset baseline` |
+| **eval-only** | Evaluate an existing model | `python scripts/run_pipeline.py --mode eval-only --model models/best.pt` |
+| **augment-only** | Augment training data only | `python scripts/run_pipeline.py --mode augment-only --multiplier 10` |
+
+**Recommended first run** (for your small dataset):
+```bash
+python scripts/run_pipeline.py --mode full --preset small_dataset --multiplier 5
+```
+
+**Quick sanity check** (fast, 20 epochs — just to verify the pipeline works):
+```bash
+python scripts/run_pipeline.py --mode full --preset fast_training --multiplier 2
+```
+
+### Individual Step Commands
 
 | Step | Script / Tool              | Command                                              |
 |------|----------------------------|------------------------------------------------------|
@@ -206,6 +262,26 @@ nc: 3
 | 12   | Run inference (continuous) | `python scripts/defect_detector.py --model models/best.pt --continuous` |
 | 13   | Export model               | `python scripts/export_model.py models/best.pt --format onnx` |
 | 14   | Webcam demo                | `python scripts/webcam_demo.py`                      |
+
+### 🔁 Iteration Cycle
+
+After each training run, follow this cycle to continuously improve:
+
+```
+  ┌──────────────────────────────────────────────────────────────┐
+  │                                                              │
+  │   Augment ──▶ Train ──▶ Evaluate ──▶ Analyze Results ──┐    │
+  │                                                         │    │
+  │   ◀── Adjust hyperparams / Add more data ◀──────────────┘    │
+  │                                                              │
+  └──────────────────────────────────────────────────────────────┘
+```
+
+**What to check after each run:**
+1. **Confusion matrix** → Are `Flat_line` and `Unwash` being confused with each other?
+2. **Confidence histogram** → Is the 0.5 threshold too high/low for your data?
+3. **Per-class F1** → Which class is weakest? Collect more data for that class.
+4. **Training loss curve** → Still decreasing? Train longer. Plateaued? Change hyperparams.
 
 > **Agent Note**: Add new pipeline steps or scripts as they are created.
 
@@ -258,6 +334,13 @@ nc: 3
 - Parses `results.csv` and extracts per-epoch metrics
 - Prints **comparison table** (mAP, precision, recall per run)
 - Generates **overlay plots** (loss, mAP curves) and saves **JSON summary**
+
+### `run_pipeline.py`
+- ⭐ **Master pipeline** — chains all steps into a single command
+- 4 modes: `full`, `train-eval`, `eval-only`, `augment-only`
+- Loads hyperparameter presets from `config/hyperparams.yaml`
+- Prints final summary with mAP, F1, elapsed time
+- Recommended: `python scripts/run_pipeline.py --mode full --preset small_dataset`
 
 ### `defect_detector.py`
 - Production inference pipeline with 3 main components:
@@ -374,3 +457,4 @@ See `LICENSE` file for details.
 ---
 
 *This document is automatically maintained. Manual edits should follow the structure above.*
+
