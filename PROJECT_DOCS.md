@@ -11,7 +11,7 @@
 - **Model**: `YOLOv11m` (medium variant) — also tested with `YOLO26n` (nano)
 - **Version**: `0.2.0`
 - **Status**: `In Progress`
-- **Last Updated**: `2026-03-04`
+- **Last Updated**: `2026-03-05`
 - **Repository**: [sabareesh-h/detection](https://github.com/sabareesh-h/detection)
 
 ---
@@ -32,10 +32,11 @@
 
 | Layer              | Technology          | Version     |
 |--------------------|---------------------|-------------|
-| Language           | Python              | 3.14+       |
-| ML Framework       | Ultralytics (YOLO)  | ≥ 8.3.0    |
-| Deep Learning      | PyTorch             | ≥ 2.0.0    |
-| Vision Library     | torchvision         | ≥ 0.15.0   |
+| Language           | Python              | 3.11 (GPU env) |
+| ML Framework       | Ultralytics (YOLO)  | 8.4.19      |
+| Deep Learning      | PyTorch             | 2.10.0+cu128 |
+| Vision Library     | torchvision         | 0.25.0+cu128 |
+| CUDA Toolkit       | NVIDIA CUDA         | 12.8 (cu128) |
 | Camera SDK         | pypylon (Basler)    | ≥ 3.0.0    |
 | Image Processing   | OpenCV              | ≥ 4.8.0    |
 | Image I/O          | Pillow              | ≥ 10.0.0   |
@@ -101,6 +102,7 @@ Image_detection/
 ├── Understanding_YOLO_Complete_Guide.docx  # YOLO concepts reference
 ├── PROJECT_DOCS.md               # This file
 ├── PROBLEMS_AND_SOLUTIONS.md     # Problems faced & solutions log
+├── Coding_understanding.md       # Line-by-line code explanations
 └── README.md                     # Quick-start entry point
 ```
 
@@ -125,17 +127,18 @@ source defect_env/bin/activate
 # 3. Install dependencies
 pip install -r requirements.txt
 
-# 4. (Optional) GPU environment — requires CUDA-compatible PyTorch
-python -m venv defect_env_gpu
-defect_env_gpu\Scripts\activate
-pip install -r requirements.txt
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+# 4. GPU environment — requires Python 3.11 + CUDA 12.8 PyTorch
+#    ⚠️ Blackwell GPUs (RTX PRO 500, RTX 50-series) REQUIRE cu128!
+"C:\Users\RohithSuryaCKM\AppData\Local\Programs\Python\Python311\python.exe" -m venv defect_env_gpu311
+defect_env_gpu311\Scripts\activate
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+pip install ultralytics opencv-python numpy pyyaml matplotlib pandas seaborn polars scipy
 
 # 5. Install Basler Pylon SDK (for camera integration)
 # Download from: https://www.baslerweb.com/en/downloads/software-downloads/
 ```
 
-> **Agent Note**: Two virtual environments exist — `defect_env` (CPU) and `defect_env_gpu` (GPU/CUDA). Update commands if setup process changes.
+> **Agent Note**: GPU environment is `defect_env_gpu311` (Python 3.11 + CUDA 12.8). Blackwell GPUs require `cu128` — lower CUDA versions (cu121/cu124/cu126) do NOT support sm_120.
 
 ---
 
@@ -365,7 +368,7 @@ After each training run, follow this cycle to continuously improve:
 | Pre-trained Weights   | `yolo11m.pt` (COCO pre-trained)   |
 | Alt. Weights          | `yolo26n.pt` (nano, for speed)    |
 | Training Epochs       | 100 (default)                     |
-| Batch Size            | 16                                |
+| Batch Size            | 8 (GPU: RTX PRO 500, 6GB VRAM)    |
 | Early Stopping        | patience = 20 epochs              |
 | Optimizer             | Ultralytics default (SGD/AdamW)   |
 | Confidence Threshold  | 0.5                               |
@@ -410,7 +413,8 @@ After each training run, follow this cycle to continuously improve:
 | Issue | Severity | Status |
 |-------|----------|--------|
 | Training stopped early due to small dataset size — low patience value | Medium | Resolved (patience adjusted) |
-| GPU environment requires separate venv (`defect_env_gpu`) with CUDA PyTorch | Low | Documented |
+| GPU environment requires `defect_env_gpu311` (Python 3.11) with CUDA 12.8 PyTorch | Low | Documented |
+| Blackwell GPU (RTX PRO 500) needs `cu128` — cu121/cu124/cu126 fail with "no kernel image" | High | Resolved |
 | Basler SDK (`pypylon`) requires manual download of Pylon SDK | Low | Documented |
 
 > **Agent Note**: Add new bugs here as discovered. Update status as they are resolved.
@@ -422,6 +426,12 @@ After each training run, follow this cycle to continuously improve:
 ### [Unreleased]
 - Exploring additional defect classes
 - Dashboard for inspection monitoring
+
+### v0.2.1 — `2026-03-05`
+- Fixed Blackwell GPU support — requires PyTorch cu128 (CUDA 12.8)
+- Updated GPU environment to `defect_env_gpu311` (Python 3.11)
+- Verified GPU training: RTX PRO 500, batch=4, 20.4ms/image inference
+- Recommended batch size: 8 (6 GB VRAM)
 
 ### v0.2.0 — `2026-02-27`
 - Added Roboflow dataset download script

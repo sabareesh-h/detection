@@ -57,7 +57,7 @@ def train_yolov11m(
     project: str = "models",
     name: str = None,
     resume: bool = False,
-    weights: str = "yolo11m.pt"
+    weights: str = "yolo26m.pt"
 ):
     """
     Train YOLOv11m model on defect detection dataset

@@ -1,6 +1,7 @@
 # Virtual environments
 defect_env/
 defect_env_gpu/
+defect_env_gpu311/
 
 # CVAT & Data
 cvat/
@@ -15,6 +16,9 @@ Learning/
 # Models & Training Outputs
 runs/
 models/
+*.pt
+*.onnx
+*.engine
 
 # Python
 __pycache__/
@@ -22,6 +26,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+*.egg
 
 # Media
 *.jpg
@@ -33,7 +38,12 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # IDE
 .vscode/
 .idea/
+*.swp
+
+# Gemini / AI Agent
+.gemini/

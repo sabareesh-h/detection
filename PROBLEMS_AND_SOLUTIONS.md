@@ -9,16 +9,51 @@
 
 | Category | Total Issues | Resolved | Open |
 |----------|-------------|----------|------|
-| Environment & Setup | 4 | 4 | 0 |
+| Environment & Setup | 5 | 5 | 0 |
 | Training & Model | 3 | 3 | 0 |
 | Data & Annotation | 2 | 2 | 0 |
 | Deployment & Infra | 1 | 1 | 0 |
 
-**Last Updated**: `2026-03-04`
+**Last Updated**: `2026-03-05`
 
 ---
 
 ## 🖥️ Environment & Setup
+
+### P-005: Blackwell GPU (RTX PRO 500) — "No Kernel Image Available" Error
+- **Date**: 2026-03-05
+- **Severity**: 🔴 High
+- **Status**: ✅ Resolved
+
+**Problem**:  
+Training on the NVIDIA RTX PRO 500 Blackwell GPU failed with `CUDA error: no kernel image is available for execution on the device`. PyTorch detected the GPU (`torch.cuda.is_available() = True`), but any CUDA tensor operation crashed immediately.
+
+**Root Cause**:  
+The Blackwell architecture uses compute capability **sm_120**. PyTorch builds with CUDA 12.1 (`cu121`), CUDA 12.4 (`cu124`), and CUDA 12.6 (`cu126`) only include kernels up to **sm_90** (Hopper). Only CUDA **12.8** (`cu128`) builds include sm_120 kernels.
+
+| CUDA Index | Highest Arch | Blackwell Support |
+|-----------|-------------|-------------------|
+| cu121 | sm_90 | ❌ |
+| cu124 | sm_90 | ❌ |
+| cu126 | sm_90 | ❌ |
+| **cu128** | **sm_120** | **✅** |
+
+**Solution**:  
+Install PyTorch from the **cu128** index:
+```bash
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+```
+
+**Verified Working Versions**:
+- `torch==2.10.0+cu128`
+- `torchvision==0.25.0+cu128`
+- GPU Memory Used: 2.44G (batch=4, imgsz=640)
+- Inference Speed: 20.4ms/image
+
+**Lesson Learned**:  
+New GPU architectures require matching CUDA toolkit versions in PyTorch builds. Always check `torch.cuda.get_arch_list()` to verify your GPU's compute capability (e.g., `sm_120`) is in the list. If not, try a higher CUDA index (`cu126` → `cu128`).
+
+---
 
 ### P-001: GPU Not Detected for Training
 - **Date**: 2026-02-16
