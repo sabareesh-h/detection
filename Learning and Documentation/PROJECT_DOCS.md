@@ -86,6 +86,21 @@ Image_detection/
 │   ├── export_model.py           # Model export (ONNX, TensorRT, etc.)
 │   └── webcam_demo.py            # Quick webcam inference demo
 │
+├── Learning and Documentation/
+│   ├── PROJECT_DOCS.md           # Full project documentation (this file)
+│   ├── PROBLEMS_AND_SOLUTIONS.md # Problems faced & solutions log
+│   ├── Coding_understanding.md   # Line-by-line code explanations
+│   ├── camera_technical_specifications_guide.md
+│   ├── comprehensive_project_roadmap.md
+│   ├── model_training_workflow_guide.md
+│   ├── Code for yolo training.md
+│   ├── Difference YOLO and Keyence.md
+│   ├── Understanding_YOLO_Complete_Guide.docx
+│   ├── yolo_beginner_guide.md
+│   ├── yolo_complete_guide.md
+│   └── understanding_code/       # Script-by-script explanations
+│       └── Camera_capture.md
+│
 ├── runs/                         # Ultralytics training/val/detect outputs
 │   └── detect/
 │       ├── models/               # Saved model weights
@@ -93,16 +108,9 @@ Image_detection/
 │       └── val/                  # Validation results
 │
 ├── cvat/                         # CVAT annotation tool (Docker setup)
-├── yolo11m.pt                    # Pre-trained YOLO11m weights
-├── yolo26n.pt                    # Pre-trained YOLO26n weights
 ├── requirements.txt              # Python dependencies
 ├── start_cvat.bat                # Start CVAT annotation server
 ├── stop_cvat.bat                 # Stop CVAT annotation server
-├── model_training_workflow_guide.md  # Detailed training guide
-├── Understanding_YOLO_Complete_Guide.docx  # YOLO concepts reference
-├── PROJECT_DOCS.md               # This file
-├── PROBLEMS_AND_SOLUTIONS.md     # Problems faced & solutions log
-├── Coding_understanding.md       # Line-by-line code explanations
 └── README.md                     # Quick-start entry point
 ```
 
