@@ -263,7 +263,7 @@ class ModelEvaluator:
 
         image_files = []
         for ext in ['*.jpg', '*.jpeg', '*.png', '*.bmp']:
-            import glob
+            import glob 
             image_files.extend(glob.glob(os.path.join(images_dir, ext)))
 
         print(f"  Running inference on {len(image_files)} images...")
@@ -397,7 +397,7 @@ class ModelEvaluator:
             )
             if torch.cuda.is_available():
                 speed_results['gpu_memory_gb'] = round(
-                    torch.cuda.get_device_properties(0).total_mem / 1e9, 1
+                    torch.cuda.get_device_properties(0).total_memory / 1e9, 1
                 )
 
         return speed_results
@@ -558,8 +558,8 @@ Examples:
                         help='Path to dataset.yaml (default: config/dataset.yaml)')
     parser.add_argument('--split', default='test', choices=['test', 'val', 'train'],
                         help='Dataset split to evaluate (default: test)')
-    parser.add_argument('--imgsz', type=int, default=640,
-                        help='Input image size (default: 640)')
+    parser.add_argument('--imgsz', type=int, default=1024,
+                        help='Input image size (default: 1024)')
     parser.add_argument('--batch', type=int, default=16,
                         help='Batch size (default: 16)')
     parser.add_argument('--conf', type=float, default=0.5,

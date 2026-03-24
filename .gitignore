@@ -10,6 +10,8 @@ Classroom*/
 dataset/
 Automation*/
 Good/
+Good_label/
+Rust/
 Learning/
 *.zip
 
@@ -39,6 +41,9 @@ build/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Databases
+*.db
 
 # IDE
 .vscode/

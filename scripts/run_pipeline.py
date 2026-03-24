@@ -29,7 +29,7 @@ DEFAULT_DATA_CONFIG = str(PROJECT_ROOT / "config" / "dataset.yaml")
 DEFAULT_HYPERPARAMS = str(PROJECT_ROOT / "config" / "hyperparams.yaml")
 DEFAULT_TRAIN_IMAGES = str(PROJECT_ROOT / "dataset" / "images" / "train")
 DEFAULT_TRAIN_LABELS = str(PROJECT_ROOT / "dataset" / "labels" / "train")
-DEFAULT_MODEL_WEIGHTS = "yolo11m.pt"
+DEFAULT_MODEL_WEIGHTS = "yolo26m.pt"
 
 
 # ============================================================
@@ -136,7 +136,7 @@ def step_train(data_config: str, preset_name: str = "small_dataset",
         return None
 
     import torch
-    from train_model import check_environment, train_yolov11m
+    from train_model import check_environment, train_yolo_model
 
     # Check GPU
     check_environment()
@@ -150,7 +150,7 @@ def step_train(data_config: str, preset_name: str = "small_dataset",
         name = f"pipeline_{preset_name}_{timestamp}"
 
     # Train with preset values
-    results = train_yolov11m(
+    results = train_yolo_model(
         data_config=data_config,
         epochs=preset.get('epochs', 100),
         batch_size=preset.get('batch_size', 16),
@@ -403,7 +403,7 @@ Examples:
     parser.add_argument('--data', default=DEFAULT_DATA_CONFIG,
                         help='Path to dataset.yaml')
     parser.add_argument('--weights', default=DEFAULT_MODEL_WEIGHTS,
-                        help='Pre-trained model weights (default: yolo11m.pt)')
+                        help='Pre-trained model weights (default: yolo26m.pt)')
     parser.add_argument('--model', default=None,
                         help='Path to trained model (for eval-only mode)')
     parser.add_argument('--device', default='0',

@@ -9,9 +9,14 @@ test: images/test
 
 # Class names - matching CVAT annotation labels
 names:
-  0: Good
-  1: Flat_line
-  2: Unwash
+  0: Good(Top)
+  1: Rust(Top)
+  2: Rust(Mid)
+  3: Rust(Bottom)
+  4: Rust(Thread)
+  5: Good(Mid)
+  6: Good(Thread)
+  7: Good(Bottom)
 
 # Number of classes
-nc: 3
+nc: 8

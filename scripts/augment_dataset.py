@@ -68,8 +68,9 @@ def get_augmentation_pipeline(level: str = "medium") -> A.Compose:
     """
     Build an augmentation pipeline suited for factory defect detection.
     
-    Args:
-        level: Augmentation intensity — 'light', 'medium', or 'heavy'
+    Applies only:
+        - Rotation: Up to ±15°
+        - CLAHE: Contrast Limited Adaptive Histogram Equalization
         
     Returns:
         albumentations Compose pipeline with bbox support
@@ -77,42 +78,10 @@ def get_augmentation_pipeline(level: str = "medium") -> A.Compose:
     if not ALBUMENTATIONS_AVAILABLE:
         raise ImportError("albumentations is required for augmentation")
     
-    if level == "light":
-        transforms = [
-            A.HorizontalFlip(p=0.5),
-            A.RandomBrightnessContrast(brightness_limit=0.1, contrast_limit=0.1, p=0.5),
-            A.GaussNoise(var_limit=(5.0, 20.0), p=0.3),
-        ]
-    elif level == "heavy":
-        transforms = [
-            A.HorizontalFlip(p=0.5),
-            A.VerticalFlip(p=0.2),
-            A.Rotate(limit=30, border_mode=cv2.BORDER_REFLECT_101, p=0.6),
-            A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, p=0.7),
-            A.OneOf([
-                A.GaussNoise(var_limit=(10.0, 50.0)),
-                A.GaussianBlur(blur_limit=(3, 7)),
-                A.MotionBlur(blur_limit=(3, 7)),
-            ], p=0.5),
-            A.CLAHE(clip_limit=4.0, p=0.4),
-            A.RandomShadow(shadow_roi=(0, 0, 1, 1), p=0.3),
-            A.HueSaturationValue(hue_shift_limit=10, sat_shift_limit=20, val_shift_limit=20, p=0.4),
-            A.RandomScale(scale_limit=0.2, p=0.3),
-            A.PiecewiseAffine(scale=(0.01, 0.03), p=0.2),
-        ]
-    else:  # medium (default)
-        transforms = [
-            A.HorizontalFlip(p=0.5),
-            A.Rotate(limit=15, border_mode=cv2.BORDER_REFLECT_101, p=0.5),
-            A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.6),
-            A.OneOf([
-                A.GaussNoise(var_limit=(10.0, 30.0)),
-                A.GaussianBlur(blur_limit=(3, 5)),
-            ], p=0.4),
-            A.CLAHE(clip_limit=3.0, p=0.3),
-            A.RandomShadow(shadow_roi=(0, 0, 1, 1), p=0.2),
-            A.HueSaturationValue(hue_shift_limit=5, sat_shift_limit=15, val_shift_limit=15, p=0.3),
-        ]
+    transforms = [
+        A.Rotate(limit=15, border_mode=cv2.BORDER_REFLECT_101, p=0.5),
+        A.CLAHE(clip_limit=3.0, tile_grid_size=(8, 8), p=0.5),
+    ]
 
     pipeline = A.Compose(
         transforms,
@@ -212,7 +181,7 @@ def augment_dataset(
     labels_dir: str,
     output_images_dir: Optional[str] = None,
     output_labels_dir: Optional[str] = None,
-    multiplier: int = 5,
+    multiplier: int = 2,
     level: str = "medium",
     copy_originals: bool = True,
     seed: int = 42
@@ -424,8 +393,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Augment training set with 5x copies (medium intensity)
-  python augment_dataset.py --input dataset/images/train --labels dataset/labels/train --multiplier 5
+  # Augment training set with 2x copies (medium intensity)
+  python augment_dataset.py --input dataset/images/train --labels dataset/labels/train --multiplier 2
 
   # Heavy augmentation to separate output directory
   python augment_dataset.py --input dataset/images/train --labels dataset/labels/train \\
@@ -445,8 +414,8 @@ Examples:
                         help='Output images directory (default: same as input — in-place)')
     parser.add_argument('--output-labels', default=None,
                         help='Output labels directory (default: same as labels — in-place)')
-    parser.add_argument('--multiplier', type=int, default=5,
-                        help='Number of augmented copies per image (default: 5)')
+    parser.add_argument('--multiplier', type=int, default=2,
+                        help='Number of augmented copies per image (default: 2)')
     parser.add_argument('--level', choices=['light', 'medium', 'heavy'], default='medium',
                         help='Augmentation intensity (default: medium)')
     parser.add_argument('--seed', type=int, default=42,

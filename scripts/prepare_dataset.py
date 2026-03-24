@@ -18,24 +18,14 @@ PROJECT_ROOT = Path(r"C:\Users\RohithSuryaCKM\Downloads\Projects\Image_detection
 # CVAT annotation exports (contain .txt label files)
 ANNOTATION_SOURCES = [
     {
-        "labels_dir": PROJECT_ROOT / "task_4_annotations_2026_02_16_06_17_16_yolo 1.1" / "obj_Train_data" / "Good" / "Image_processing",
-        "images_dir": PROJECT_ROOT / "Good" / "Image_processing",
-        "description": "Task 4 - Good images"
-    },
-    {
-        "labels_dir": PROJECT_ROOT / "task_5_annotations_2026_02_16_06_26_29_yolo 1.1" / "obj_Train_data" / "Automation",
-        "images_dir": PROJECT_ROOT / "Automation -20260216T061857Z-1-001" / "Automation",
-        "description": "Task 5 - Automation (defect) images"
-    },
-    {
-        "labels_dir": PROJECT_ROOT / "task_6_annotations" / "obj_Train_data" / "Classroom",
-        "images_dir": PROJECT_ROOT / "Classroom" / "Classroom",
-        "description": "Task 6 - Classroom (new) images"
+        "labels_dir": PROJECT_ROOT / "Scripts" / "dataset" / "labels" / "train",
+        "images_dir": PROJECT_ROOT / "Scripts" / "dataset" / "Images" / "train",
+        "description": "Train-1"
     },
 ]
 
 # Class names (from obj.names in your CVAT exports)
-CLASS_NAMES = {0: "Good", 1: "Flat_line", 2: "Unwash"}
+CLASS_NAMES = {0: "Good(Top)", 1: "Rust(Top)", 2: "Rust(Mid)", 3: "Rust(Bottom)", 4: "Rust(Thread)", 5: "Good(Mid)", 6: "Good(Thread)", 7: "Good(Bottom)"}
 
 # Output dataset directory
 OUTPUT_DIR = PROJECT_ROOT / "dataset"

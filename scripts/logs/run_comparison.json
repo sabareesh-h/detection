@@ -1,0 +1,192 @@
+[
+  {
+    "name": "defect_yolo26m_20260319_142148",
+    "path": "runs\\detect\\models\\defect_yolo26m_20260319_142148",
+    "date": "2026-03-20 10:57",
+    "total_epochs": 150,
+    "best_epoch": 130,
+    "best_mAP50": 0.9942,
+    "best_mAP50_95": 0.8782,
+    "best_precision": 0.9673,
+    "best_recall": 0.9903,
+    "config": {
+      "imgsz": 1280,
+      "batch": 2,
+      "epochs": 150,
+      "lr0": 0.0008,
+      "optimizer": "AdamW",
+      "patience": 60
+    }
+  },
+  {
+    "name": "defect_yolo26m_20260319_140725",
+    "path": "runs\\detect\\models\\defect_yolo26m_20260319_140725",
+    "date": "2026-03-19 14:18",
+    "total_epochs": 6,
+    "best_epoch": 6,
+    "best_mAP50": 0.9855,
+    "best_mAP50_95": 0.7541,
+    "best_precision": 0.9505,
+    "best_recall": 0.984,
+    "config": {
+      "imgsz": 1280,
+      "batch": 2,
+      "epochs": 150,
+      "lr0": 0.0008,
+      "optimizer": "AdamW",
+      "patience": 60
+    }
+  },
+  {
+    "name": "defect_yolo26m_20260317_144141",
+    "path": "runs\\detect\\models\\defect_yolo26m_20260317_144141",
+    "date": "2026-03-17 16:25",
+    "total_epochs": 100,
+    "best_epoch": 63,
+    "best_mAP50": 0.9904,
+    "best_mAP50_95": 0.8716,
+    "best_precision": 0.9857,
+    "best_recall": 0.9752,
+    "config": {
+      "imgsz": 1024,
+      "batch": 4,
+      "epochs": 100,
+      "lr0": 0.0008,
+      "optimizer": "AdamW",
+      "patience": 40
+    }
+  },
+  {
+    "name": "defect_yolo26m_20260317_141121",
+    "path": "runs\\detect\\models\\defect_yolo26m_20260317_141121",
+    "date": "2026-03-17 14:14",
+    "total_epochs": 2,
+    "best_epoch": 2,
+    "best_mAP50": 0.9506,
+    "best_mAP50_95": 0.6749,
+    "best_precision": 0.8379,
+    "best_recall": 0.9073,
+    "config": {
+      "imgsz": 1024,
+      "batch": 4,
+      "epochs": 100,
+      "lr0": 0.0008,
+      "optimizer": "AdamW",
+      "patience": 40
+    }
+  },
+  {
+    "name": "defect_yolo26m_20260315_135621",
+    "path": "runs\\detect\\models\\defect_yolo26m_20260315_135621",
+    "date": "2026-03-17 00:28",
+    "total_epochs": 100,
+    "best_epoch": 88,
+    "best_mAP50": 0.9924,
+    "best_mAP50_95": 0.8691,
+    "best_precision": 0.9887,
+    "best_recall": 0.9727,
+    "config": {
+      "imgsz": 1024,
+      "batch": 4,
+      "epochs": 100,
+      "lr0": 0.001,
+      "optimizer": "AdamW",
+      "patience": 50
+    }
+  },
+  {
+    "name": "defect_yolo26m_20260314_145931",
+    "path": "runs\\detect\\models\\defect_yolo26m_20260314_145931",
+    "date": "2026-03-15 12:41",
+    "total_epochs": 27,
+    "best_epoch": 7,
+    "best_mAP50": 0.9782,
+    "best_mAP50_95": 0.7541,
+    "best_precision": 0.9492,
+    "best_recall": 0.9526,
+    "config": {
+      "imgsz": 1024,
+      "batch": 4,
+      "epochs": 100,
+      "lr0": 0.001,
+      "optimizer": "AdamW",
+      "patience": 30
+    }
+  },
+  {
+    "name": "defect_yolo26m_20260314_140257",
+    "path": "runs\\detect\\models\\defect_yolo26m_20260314_140257",
+    "date": "2026-03-14 14:26",
+    "total_epochs": 3,
+    "best_epoch": 2,
+    "best_mAP50": 0.9669,
+    "best_mAP50_95": 0.6842,
+    "best_precision": 0.9136,
+    "best_recall": 0.9314,
+    "config": {
+      "imgsz": 1024,
+      "batch": 4,
+      "epochs": 100,
+      "lr0": 0.001,
+      "optimizer": "AdamW",
+      "patience": 50
+    }
+  },
+  {
+    "name": "defect_yolo26m_20260314_095127",
+    "path": "runs\\detect\\models\\defect_yolo26m_20260314_095127",
+    "date": "2026-03-14 11:20",
+    "total_epochs": 100,
+    "best_epoch": 89,
+    "best_mAP50": 0.9921,
+    "best_mAP50_95": 0.8594,
+    "best_precision": 0.9835,
+    "best_recall": 0.986,
+    "config": {
+      "imgsz": 640,
+      "batch": 4,
+      "epochs": 100,
+      "lr0": 0.001,
+      "optimizer": "AdamW",
+      "patience": 50
+    }
+  },
+  {
+    "name": "defect_yolov8m_20260314_091521",
+    "path": "runs\\detect\\models\\defect_yolov8m_20260314_091521",
+    "date": "2026-03-14 09:41",
+    "total_epochs": 1,
+    "best_epoch": 1,
+    "best_mAP50": 0.9825,
+    "best_mAP50_95": 0.6823,
+    "best_precision": 0.9559,
+    "best_recall": 0.9935,
+    "config": {
+      "imgsz": 1280,
+      "batch": 4,
+      "epochs": 180,
+      "lr0": 0.005,
+      "optimizer": "auto",
+      "patience": 30
+    }
+  },
+  {
+    "name": "defect_yolo26m_20260314_081547",
+    "path": "runs\\detect\\models\\defect_yolo26m_20260314_081547",
+    "date": "2026-03-14 09:09",
+    "total_epochs": 1,
+    "best_epoch": 1,
+    "best_mAP50": 0.9035,
+    "best_mAP50_95": 0.659,
+    "best_precision": 0.8247,
+    "best_recall": 0.7789,
+    "config": {
+      "imgsz": 1280,
+      "batch": 4,
+      "epochs": 180,
+      "lr0": 0.005,
+      "optimizer": "auto",
+      "patience": 30
+    }
+  }
+]

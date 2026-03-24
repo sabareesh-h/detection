@@ -1,7 +1,7 @@
 [[Image processing]]
 model.train( data='/content/dataset/data.yaml',  
 epochs=150, imgsz=1280,  
-batch = 0.65,  
+batch = -1,  
 device=0,  
 workers=4,  
 lr0=0.001,  

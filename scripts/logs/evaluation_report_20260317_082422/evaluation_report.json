@@ -1,0 +1,101 @@
+{
+  "model_path": "runs/detect/models/defect_yolo26m_20260315_135621/weights/best.pt",
+  "data_config": "../config/dataset.yaml",
+  "device": "0",
+  "split": "test",
+  "img_size": 640,
+  "conf_threshold": 0.5,
+  "iou_threshold": 0.45,
+  "timestamp": "2026-03-17T08:24:22.364444",
+  "class_names": {
+    "0": "Good(Top)",
+    "1": "Rust(Top)",
+    "2": "Rust(Mid)",
+    "3": "Rust(Bottom)",
+    "4": "Rust(Thread)",
+    "5": "Good(Mid)",
+    "6": "Good(Thread)",
+    "7": "Good(Bottom)"
+  },
+  "metrics": {
+    "overall": {
+      "mAP50": 0.982,
+      "mAP50_95": 0.8475,
+      "precision": 0.9679,
+      "recall": 0.9693,
+      "f1": 0.9686
+    },
+    "per_class": {
+      "Good(Top)": {
+        "ap50": 0.9919,
+        "ap50_95": 0.9213,
+        "precision": 0.9652,
+        "recall": 0.9907,
+        "f1": 0.9778
+      },
+      "Rust(Top)": {
+        "ap50": 0.9636,
+        "ap50_95": 0.8909,
+        "precision": 0.9661,
+        "recall": 0.9344,
+        "f1": 0.95
+      },
+      "Rust(Mid)": {
+        "ap50": 0.9819,
+        "ap50_95": 0.8643,
+        "precision": 0.9552,
+        "recall": 0.9697,
+        "f1": 0.9624
+      },
+      "Rust(Bottom)": {
+        "ap50": 0.9548,
+        "ap50_95": 0.7966,
+        "precision": 0.9394,
+        "recall": 0.9254,
+        "f1": 0.9323
+      },
+      "Rust(Thread)": {
+        "ap50": 0.99,
+        "ap50_95": 0.7926,
+        "precision": 0.9818,
+        "recall": 0.9818,
+        "f1": 0.9818
+      },
+      "Good(Mid)": {
+        "ap50": 0.9902,
+        "ap50_95": 0.9264,
+        "precision": 0.9906,
+        "recall": 0.9805,
+        "f1": 0.9855
+      },
+      "Good(Thread)": {
+        "ap50": 0.9948,
+        "ap50_95": 0.7968,
+        "precision": 0.9725,
+        "recall": 0.9907,
+        "f1": 0.9815
+      },
+      "Good(Bottom)": {
+        "ap50": 0.9885,
+        "ap50_95": 0.7907,
+        "precision": 0.9722,
+        "recall": 0.9813,
+        "f1": 0.9767
+      }
+    }
+  },
+  "speed": {
+    "total_ms_mean": 18.86,
+    "total_ms_std": 1.03,
+    "total_ms_min": 17.32,
+    "total_ms_max": 23.68,
+    "fps": 53.0,
+    "iterations": 100,
+    "img_size": 640,
+    "preprocess_ms": 1.94,
+    "inference_ms": 16.46,
+    "postprocess_ms": 0.3,
+    "device_name": "NVIDIA RTX PRO 500 Blackwell Generation Laptop GPU",
+    "gpu_memory_gb": 6.4
+  }
+}

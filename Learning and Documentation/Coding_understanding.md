@@ -305,9 +305,9 @@ print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB
 ```
 **Why?** Always verify GPU before training. CPU training is 10–50x slower.
 
-### `train_yolov11m` — Core Training Function (Lines 50–162)
+### `train_yolov26m` — Core Training Function (Lines 50–162)
 ```python
-model = YOLO(weights)    # Load pre-trained YOLOv11m (weights="yolo11m.pt")
+model = YOLO(weights)    # Load pre-trained YOLOv11m (weights="yolo26m.pt")
 # ↑ "Transfer learning" — start from COCO pre-trained weights, not scratch
 ```
 
@@ -348,7 +348,7 @@ results = model.train(
 ```
 
 **Key concepts**:
-- **Transfer learning**: Starting from `yolo11m.pt` (pre-trained on COCO, 80 classes) lets the model already "know" what objects look like. You're just teaching it your 3 specific classes.
+- **Transfer learning**: Starting from `yolo26m.pt` (pre-trained on COCO, 80 classes) lets the model already "know" what objects look like. You're just teaching it your 3 specific classes.
 - **Early stopping**: If validation mAP doesn't improve for `patience` epochs, training stops to prevent overfitting.
 - **Mosaic augmentation**: The most powerful YOLO augmentation — combines 4 training images into one, forcing the model to detect objects at different scales and positions.
 - **AMP (Mixed Precision)**: Uses 16-bit floats where possible → ~2x faster training, same accuracy.
@@ -574,7 +574,7 @@ sys.path.insert(0, scripts_dir)
 # Then imports functions directly from other scripts:
 from validate_images import ImageQualityValidator
 from augment_dataset import augment_dataset
-from train_model import check_environment, train_yolov11m
+from train_model import check_environment, train_yolov26m
 from evaluate_model import ModelEvaluator
 from compare_runs import discover_runs, print_comparison_table
 ```

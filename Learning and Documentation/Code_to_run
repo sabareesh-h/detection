@@ -1,0 +1,80 @@
+🔧 Complete Command List — Defect Detection System
+Step 0: Navigate to Project Directory
+powershell
+cd C:\Users\RohithSuryaCKM\Downloads\Projects\Image_detection
+Step 1: Activate Virtual Environment
+powershell
+.\defect_env_gpu311\Scripts\activate
+Step 2: Install Dependencies (one-time setup)
+powershell
+pip install -r requirements.txt
+Step 3: Validate Images
+powershell
+.\defect_env_gpu311\Scripts\python.exe scripts\validate_images.py --images dataset\images\train
+Step 4: Augment Dataset (if you have a small dataset)
+powershell
+.\defect_env_gpu311\Scripts\python.exe scripts\augment_dataset.py --images dataset\images\train --labels dataset\labels\train --multiplier 5 --level medium
+Step 5: Train the Model
+powershell
+.\defect_env_gpu311\Scripts\python.exe scripts\train_model.py --data config\dataset.yaml --epochs 100 --batch 16 --imgsz 640 --patience 20 --device 0 --weights yolo11m.pt
+Step 6: Evaluate the Model
+powershell
+.\defect_env_gpu311\Scripts\python.exe scripts\evaluate_model.py --model <path_to_best.pt> --data config\dataset.yaml --device 0 --split test
+Replace <path_to_best.pt> with the actual path printed after training, e.g. models\defect_yolo11m_20260305_...\weights\best.pt
+
+Step 7: Compare Training Runs
+powershell
+.\defect_env_gpu311\Scripts\python.exe scripts\compare_runs.py
+Step 8: Export Model for Production
+powershell
+.\defect_env_gpu311\Scripts\python.exe scripts\export_model.py <path_to_best.pt> --format onnx --imgsz 640
+Step 9: Run Production Inference (Defect Detection)
+powershell
+.\defect_env_gpu311\Scripts\python.exe scripts\defect_detector.py --model <path_to_best.pt> --config config\system_config.json
+Step 10: Webcam Demo (optional, for quick testing)
+powershell
+.\defect_env_gpu311\Scripts\python.exe scripts\webcam_demo.py
+🚀 One-Command Pipeline (runs everything automatically)
+Instead of running steps 3–8 individually, you can use the master pipeline script:
+
+powershell
+# Full pipeline (Validate → Augment → Train → Evaluate → Compare)
+.\defect_env_gpu311\Scripts\python.exe scripts\run_pipeline.py --mode full --preset small_dataset
+# Train + Evaluate only (skip augmentation)
+.\defect_env_gpu311\Scripts\python.exe scripts\run_pipeline.py --mode train-eval --preset small_dataset
+# Quick test run (20 epochs)
+.\defect_env_gpu311\Scripts\python.exe scripts\run_pipeline.py --mode full --preset fast_training
+# Evaluate an existing model only
+.\defect_env_gpu311\Scripts\python.exe scripts\run_pipeline.py --mode eval-only --model models\best.pt
+# Augment dataset only
+.\defect_env_gpu311\Scripts\python.exe scripts\run_pipeline.py --mode augment-only --multiplier 10 --aug-level heavy
+📌 Quick Summary
+Step	Command
+Activate env	
+
+.\defect_env_gpu311\Scripts\activate
+Install deps	pip install -r requirements.txt
+Validate images	python scripts\validate_images.py --images dataset\images\train
+Augment data	python scripts\augment_dataset.py --images ... --labels ...
+Train	python scripts\train_model.py --data config\dataset.yaml ...
+Evaluate	python scripts\evaluate_model.py --model <best.pt> ...
+Compare runs	python scripts\compare_runs.py
+Export	python scripts\export_model.py <best.pt> --format onnx
+Production run	python scripts\defect_detector.py --model <best.pt>
+Full pipeline	python scripts\run_pipeline.py --mode full --preset small_dataset
+
+
+
+.\defect_env_gpu311\Scripts\activate
+train_model.py    python train_model.py --preset small_dataset
+
+python defect_detector.py --mode image --model runs/detect/models/defect_yolo26m_20260314_095127/weights/best.pt  
+
+python evaluate_model.py --model runs/detect/models/defect_yolo26m_20260315_135621/weights/best.pt --data ../config/dataset.yaml
+
+python defect_detector.py --mode video --model runs/detect/models/defect_yolo26m_20260317_144141/weights/best.pt --source C:\Users\RohithSuryaCKM\Downloads\Projects\Image_detection\Recording 2026-03-18 103052.mp4
+
+python scripts/dataset/run_greyscale_good_scratch.py
+
+
+python greyscale_converter.py -i C:\Users\RohithSuryaCKM\Downloads\Projects\Image_detection\scripts\dataset\raw\scratch\scratch_20260321_140555_603192.png

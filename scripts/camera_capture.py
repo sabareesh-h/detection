@@ -5,8 +5,10 @@ Captures images from Basler camera for defect detection dataset collection.
 
 import os
 import json
+import tempfile
 from datetime import datetime
 from pathlib import Path
+from PIL import Image
 
 try:
     from pypylon import pylon
@@ -19,13 +21,73 @@ import cv2
 import numpy as np
 
 
+# ---------------------------------------------------------------------------
+# Greyscale conversion (algorithm from greyscale_converter.py)
+# ---------------------------------------------------------------------------
+
+def _build_rust_mask(img_bgr: np.ndarray) -> np.ndarray:
+    """Return float [0,1] mask: 1.0 = strong rust, 0.0 = clean metal."""
+    r = img_bgr[:, :, 2].astype(np.float32)
+    g = img_bgr[:, :, 1].astype(np.float32)
+    b = img_bgr[:, :, 0].astype(np.float32)
+    ratio = r / (g + b + 1.0)
+    mean_r = ratio.mean()
+    mask = np.clip((ratio - mean_r) / mean_r, 0, 1).astype(np.float32)
+    return cv2.GaussianBlur(mask, (7, 7), 2)
+
+
+def convert_to_greyscale(img_bgr: np.ndarray, strength: float = 0.55) -> np.ndarray:
+    """
+    Convert a BGR image to greyscale with rust-area darkening (CLAHE enhanced).
+
+    Args:
+        img_bgr:  Input image in BGR format.
+        strength: Rust-darkening strength 0.0-1.0 (default 0.55).
+
+    Returns:
+        BGR-encoded greyscale image with rust areas darkened.
+    """
+    grey = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    grey = clahe.apply(grey)
+    rust_mask = _build_rust_mask(img_bgr)
+    dark_factor = 1.0 - rust_mask * strength
+    result = np.clip(grey.astype(np.float32) * dark_factor, 0, 255).astype(np.uint8)
+    return cv2.cvtColor(result, cv2.COLOR_GRAY2BGR)
+
+
+def select_save_mode() -> str:
+    """
+    Ask the user once at startup whether to save images as original or greyscale.
+
+    Returns:
+        'original' or 'greyscale'
+    """
+    print("\n" + "=" * 50)
+    print("  IMAGE SAVE MODE")
+    print("=" * 50)
+    print("  [1] original   - colour image as captured")
+    print("  [2] greyscale  - rust-aware greyscale (CLAHE)")
+    print("=" * 50)
+    while True:
+        choice = input("  Choose mode (1/2 or 'original'/'greyscale'): ").strip().lower()
+        if choice in ("1", "original"):
+            print("  Mode: ORIGINAL\n")
+            return "original"
+        elif choice in ("2", "greyscale", "grey", "gray"):
+            print("  Mode: GREYSCALE\n")
+            return "greyscale"
+        else:
+            print("  Invalid — enter 1 or 2.")
+
+
 class BaslerCamera:
     """Wrapper class for Basler camera operations"""
     
     def __init__(self, config_path: str = None):
         """
         Initialize Basler camera
-        
+         
         Args:
             config_path: Path to system_config.json (optional)
         """
@@ -53,7 +115,7 @@ class BaslerCamera:
                 return full_config.get('camera', default_config)
         
         return default_config
-    
+        
     def connect(self) -> bool:
         """Connect to the first available Basler camera"""
         try:
@@ -249,50 +311,115 @@ def get_camera(config_path: str = None, use_mock: bool = False):
     return BaslerCamera(config_path)
 
 
+def preview_image(image: np.ndarray, title: str = "Captured Image Preview") -> bool:
+    """
+    Display a preview of the captured image using the default system viewer.
+    
+    Args:
+        image: The captured image as a numpy array (BGR format from OpenCV)
+        title: Window title for the preview
+        
+    Returns:
+        True if the user accepts the image, False if retake is requested
+    """
+    # Convert BGR (OpenCV) to RGB (Pillow)
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    pil_image = Image.fromarray(image_rgb)
+    
+    # Resize for preview if the image is very large
+    max_preview_size = 800
+    if max(pil_image.size) > max_preview_size:
+        pil_image.thumbnail((max_preview_size, max_preview_size))
+    
+    # Save to a temp file and open with default viewer
+    temp_path = os.path.join(tempfile.gettempdir(), "_camera_preview.png")
+    pil_image.save(temp_path)
+    os.startfile(temp_path)  # Opens with default Windows photo viewer
+    
+    print(f"\n  [PREVIEW] '{title}' opened in your default image viewer.")
+    choice = input("  Type 'r' to RETAKE, or press Enter to ACCEPT: ").strip().lower()
+    
+    if choice == 'r':
+        print("  ↻ Retake requested.")
+        return False
+    
+    print("  ✓ Image accepted.")
+    return True
+
+
 # Interactive collection mode
 def collect_dataset_interactive():
     """
-    Interactive mode for collecting dataset images
-    Press keys to capture images with different labels
+    Interactive mode for collecting dataset images.
+    Asks once at startup whether to save as original colour or greyscale.
     """
+    # --- Ask for save mode before anything else ---
+    save_mode = select_save_mode()
+
     print("\n" + "="*50)
     print("DATASET COLLECTION MODE")
     print("="*50)
-    print("Press keys to capture images:")
-    print("  g - Good product")
-    print("  s - Scratch defect")
-    print("  c - Crack defect")
-    print("  d - Dent defect")
-    print("  x - Discoloration/Other defect")
-    print("  q - Quit")
+    print(f"Save mode : {save_mode.upper()}")
+    print("Keys      : g=Good  s=Scratch  c=Crack  d=Dent  r=Rust  y=Other  q=Quit")
+    print("-"*50)
+    print("After each capture a PREVIEW window will open.")
+    print("Type 'r' to retake, or press Enter to accept & save.")
     print("="*50 + "\n")
-    
+
     output_dir = "dataset/raw"
-    
+
     camera = get_camera(use_mock=not PYPYLON_AVAILABLE)
-    
+
     with camera:
         while True:
-            key = input("\nEnter label key (g/s/c/d/x) or q to quit: ").lower().strip()
-            
+            key = input("\nEnter label key (g/s/c/d/r/y) or q to quit: ").lower().strip()
+
             label_map = {
                 'g': 'good',
                 's': 'scratch',
                 'c': 'crack',
                 'd': 'dent',
-                'x': 'other'
+                'r': 'rust',
+                'y': 'other'
             }
-            
+
             if key == 'q':
                 print("Exiting collection mode...")
                 break
             elif key in label_map:
                 label = label_map[key]
-                filepath = camera.capture_and_save(output_dir, label)
-                if filepath:
-                    print(f"✓ Captured {label} image")
+
+                # Capture → preview → retake loop
+                while True:
+                    image = camera.capture()
+                    if image is None:
+                        print("✗ Capture failed. Try again.")
+                        break
+
+                    accepted = preview_image(image, title=f"Preview — {label} [{save_mode}]")
+
+                    if accepted:
+                        save_dir = Path(output_dir) / label
+                        save_dir.mkdir(parents=True, exist_ok=True)
+
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                        filename = f"{label}_{timestamp}.png"
+                        filepath = save_dir / filename
+
+                        # Apply greyscale conversion if requested
+                        if save_mode == "greyscale":
+                            image_to_save = convert_to_greyscale(image)
+                            print(f"  [greyscale] Converting before save...")
+                        else:
+                            image_to_save = image
+
+                        cv2.imwrite(str(filepath), image_to_save)
+                        print(f"  ✓ Saved {label} ({save_mode}) → {filepath}")
+                        break
+                    else:
+                        print("  Retaking image...")
             else:
-                print("Invalid key. Use g/s/c/d/x or q to quit.")
+                print("Invalid key. Use g/s/c/d/r/y or q to quit.")
 
 
 if __name__ == "__main__":

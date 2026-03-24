@@ -31,8 +31,8 @@ class DefectDetector:
         self,
         model_path: str,
         config_path: str = None,
-        conf_threshold: float = 0.5,
-        iou_threshold: float = 0.45,
+        conf_threshold: float = 0.03,
+        iou_threshold: float = 0.2,
         device: str = '0'
     ):
         """
@@ -70,8 +70,8 @@ class DefectDetector:
         """Load configuration from JSON file"""
         default_config = {
             "model": {
-                "confidence_threshold": 0.5,
-                "iou_threshold": 0.45,
+                "confidence_threshold": 0.05,
+                "iou_threshold": 0.20,
                 "image_size": 640
             },
             "inspection": {
@@ -153,6 +153,46 @@ class DefectDetector:
         result['image_path'] = image_path
         return result
     
+    def detect_from_video(self, video_path: str, output_path: Optional[str] = None):
+        """Run detection on a video file"""
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            print(f"Error: Could not open video {video_path}")
+            return
+            
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = int(cap.get(cv2.CAP_PROP_FPS))
+        
+        out = None
+        if output_path is not None:
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+            
+        print(f"Processing video: {video_path}")
+        print("Press 'q' to quit early.")
+        
+        try:
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                    
+                result = self.detect(frame)
+                annotated = self.draw_results(frame, result)
+                
+                if out is not None:
+                    out.write(annotated)
+                
+                cv2.imshow("Defect Detection - Video", cv2.resize(annotated, (800, 600)))
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+        finally:
+            cap.release()
+            if out is not None:
+                out.release()
+            cv2.destroyAllWindows()
+    
     def draw_results(self, image: np.ndarray, result: Dict) -> np.ndarray:
         """
         Draw detection results on image
@@ -165,6 +205,14 @@ class DefectDetector:
             Annotated image
         """
         annotated = image.copy()
+        h, w = annotated.shape[:2]
+        
+        # Scale text/thickness based on image size (reference: 640px)
+        scale = max(w, h) / 640.0
+        font_scale = 0.3 * scale
+        thickness = max(1, int(2 * scale))
+        box_thickness = max(2, int(3 * scale))
+        label_pad = int(10 * scale)
         
         colors = {
             'scratch': (0, 255, 255),      # Yellow
@@ -182,24 +230,26 @@ class DefectDetector:
             color = colors.get(defect['class'], default_color)
             
             # Draw bounding box
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, box_thickness)
             
             # Draw label
             label = f"{defect['class']}: {defect['confidence']:.1%}"
-            label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
-            cv2.rectangle(annotated, (x1, y1 - 20), (x1 + label_size[0], y1), color, -1)
-            cv2.putText(annotated, label, (x1, y1 - 5), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+            label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
+            cv2.rectangle(annotated, (x1, y1 - label_size[1] - label_pad), (x1 + label_size[0] + 4, y1), color, -1)
+            cv2.putText(annotated, label, (x1 + 2, y1 - int(label_pad / 2)), 
+                       cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), thickness)
         
         # Draw overall status
-        status = "REJECT" if result['is_defective'] else "PASS"
+        status = " " if result['is_defective'] else " "
         status_color = (0, 0, 255) if result['is_defective'] else (0, 255, 0)
-        cv2.putText(annotated, status, (10, 40),
-                   cv2.FONT_HERSHEY_SIMPLEX, 1.5, status_color, 3)
+        status_scale = 1.5 * scale
+        status_thick = max(2, int(3 * scale))
+        cv2.putText(annotated, status, (10, int(50 * scale)),
+                   cv2.FONT_HERSHEY_SIMPLEX, status_scale, status_color, status_thick)
         
         # Draw inference time
-        cv2.putText(annotated, f"{result['inference_time_ms']:.1f}ms", (10, 70),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+        cv2.putText(annotated, f"{result['inference_time_ms']:.1f}ms", (10, int(90 * scale)),
+                   cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness)
         
         return annotated
 
@@ -291,6 +341,7 @@ class ProductionInspectionSystem:
         self,
         model_path: str,
         config_path: str = "config/system_config.json",
+        conf_threshold: float = 0.01,
         use_mock_camera: bool = False
     ):
         """
@@ -299,9 +350,10 @@ class ProductionInspectionSystem:
         Args:
             model_path: Path to trained model
             config_path: Path to system configuration
+            conf_threshold: Confidence threshold for detection
             use_mock_camera: Use mock camera for testing
         """
-        self.detector = DefectDetector(model_path, config_path)
+        self.detector = DefectDetector(model_path, config_path, conf_threshold=conf_threshold)
         self.camera = get_camera(config_path, use_mock=use_mock_camera)
         self.logger = InspectionLogger()
         
@@ -358,26 +410,76 @@ class ProductionInspectionSystem:
         print(f"   Inference: {result['inference_time_ms']:.1f}ms")
     
     def start(self):
-        """Start continuous inspection mode"""
+        """Start continuous inspection mode with live video feed"""
         if not self.camera.connect():
             print("Failed to connect to camera")
             return
         
         self._running = True
         print("\n" + "="*50)
-        print("CONTINUOUS INSPECTION MODE")
-        print("Press Ctrl+C to stop")
+        print("LIVE INSPECTION MODE")
+        print("Press 'q' to quit | 's' to save snapshot")
         print("="*50 + "\n")
+        
+        frame_count = 0
+        fps_start = time.time()
+        display_fps = 0.0
         
         try:
             while self._running:
-                result = self.inspect_once()
-                self.print_result(result)
-                time.sleep(0.1)  # Small delay between inspections
+                # Capture image
+                image = self.camera.capture()
+                if image is None:
+                    print("Camera capture failed, retrying...")
+                    time.sleep(0.5)
+                    continue
+                
+                # Run detection
+                result = self.detector.detect(image)
+                
+                # Draw bounding boxes on the frame
+                annotated = self.detector.draw_results(image, result)
+                
+                # Calculate FPS
+                frame_count += 1
+                elapsed = time.time() - fps_start
+                if elapsed >= 1.0:
+                    display_fps = frame_count / elapsed
+                    frame_count = 0
+                    fps_start = time.time()
+                
+                # Draw FPS and stats on frame
+                cv2.putText(annotated, f"FPS: {display_fps:.1f}", (10, annotated.shape[0] - 20),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                cv2.putText(annotated, f"Defects: {result['defect_count']}", (10, annotated.shape[0] - 50),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                
+                # Show live feed
+                cv2.namedWindow("Defect Detection - Live Feed", cv2.WINDOW_NORMAL)
+                cv2.imshow("Defect Detection - Live Feed", annotated)
+                
+                # Handle key presses
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q'):
+                    print("\nQuitting live feed...")
+                    break
+                elif key == ord('s'):
+                    # Save snapshot
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                    status = 'reject' if result['is_defective'] else 'pass'
+                    save_dir = Path("logs/inspections") / status
+                    save_dir.mkdir(parents=True, exist_ok=True)
+                    snap_path = save_dir / f"snapshot_{status}_{timestamp}.png"
+                    cv2.imwrite(str(snap_path), annotated)
+                    print(f"  Snapshot saved: {snap_path}")
+                
+                # Log to database
+                self.logger.log(result)
                 
         except KeyboardInterrupt:
             print("\nStopping inspection...")
         finally:
+            cv2.destroyAllWindows()
             self.stop()
     
     def stop(self):
@@ -401,52 +503,128 @@ def main():
     """Main entry point for production inference"""
     import argparse
     
-    parser = argparse.ArgumentParser(description='Defect Detection Inference')
+    parser = argparse.ArgumentParser(
+        description='Defect Detection Inference',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Modes:
+  live    - Live camera feed with bounding boxes (press 'q' to quit, 's' to snapshot)
+  image   - Capture single image from camera, show detection result
+  video   - Process a video file (.mp4) with detection
+
+Examples:
+  python defect_detector.py --mode live --model path/to/best.pt
+  python defect_detector.py --mode image --model path/to/best.pt
+  python defect_detector.py --mode video --model path/to/best.pt --source video.mp4
+  python defect_detector.py --mode image --model path/to/best.pt --source photo.jpg
+        """
+    )
+    parser.add_argument('--mode', required=True, choices=['live', 'image', 'video'],
+                       help='Inference mode: live (camera feed), image (single capture/file), video (video file)')
     parser.add_argument('--model', default='models/best.pt',
                        help='Path to trained model')
+    parser.add_argument('--source', type=str, default=None,
+                       help='Source file path — image file for "image" mode, video file for "video" mode. '
+                            'If not provided in "image" mode, captures from camera.')
     parser.add_argument('--config', default='config/system_config.json',
                        help='Path to system config')
-    parser.add_argument('--image', type=str, default=None,
-                       help='Single image to inspect (instead of camera)')
+    parser.add_argument('--conf', type=float, default=0.03,
+                       help='Confidence threshold (default: 0.05)')
     parser.add_argument('--mock', action='store_true',
-                       help='Use mock camera for testing')
-    parser.add_argument('--continuous', action='store_true',
-                       help='Continuous inspection mode')
+                       help='Use mock camera for testing (no hardware needed)')
     
     args = parser.parse_args()
     
-    # Single image mode
-    if args.image:
-        detector = DefectDetector(args.model, args.config)
-        result = detector.detect_from_file(args.image)
-        
-        if result.get('error'):
-            print(f"Error: {result['error']}")
-        elif result['is_defective']:
-            print(f"REJECT - {result['defect_count']} defect(s)")
-            for d in result['defects']:
-                print(f"  {d['class']}: {d['confidence']:.1%}")
-        else:
-            print("PASS - No defects")
-        
-        print(f"Inference time: {result['inference_time_ms']:.1f}ms")
+    # ---- MODE: VIDEO ----
+    if args.mode == 'video':
+        if not args.source:
+            print("Error: --source is required for video mode.")
+            print("Usage: python defect_detector.py --mode video --model best.pt --source video.mp4")
+            return
+        detector = DefectDetector(args.model, args.config, conf_threshold=args.conf)
+        output_path = args.source.replace('.mp4', '_output.mp4')
+        print(f"Output will be saved to: {output_path}")
+        detector.detect_from_video(args.source, output_path)
         return
-    
-    # Camera mode
-    system = ProductionInspectionSystem(
-        model_path=args.model,
-        config_path=args.config,
-        use_mock_camera=args.mock
-    )
-    
-    if args.continuous:
+
+    # ---- MODE: IMAGE ----
+    if args.mode == 'image':
+        if args.source:
+            # Detect from image file
+            detector = DefectDetector(args.model, args.config, conf_threshold=args.conf)
+            result = detector.detect_from_file(args.source)
+            
+            if result.get('error'):
+                print(f"Error: {result['error']}")
+                return
+            
+            # Show annotated image in window
+            image = cv2.imread(args.source)
+            annotated = detector.draw_results(image, result)
+            
+            if result['is_defective']:
+                print(f"REJECT - {result['defect_count']} defect(s)")
+                for d in result['defects']:
+                    print(f"  {d['class']}: {d['confidence']:.1%}")
+            else:
+                print("PASS - No defects")
+            print(f"Inference time: {result['inference_time_ms']:.1f}ms")
+            
+            cv2.namedWindow("Defect Detection - Image", cv2.WINDOW_NORMAL)
+            cv2.imshow("Defect Detection - Image", annotated)
+            print("\nPress any key to close the window...")
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+        else:
+            # Capture from camera and show
+            system = ProductionInspectionSystem(
+                model_path=args.model,
+                config_path=args.config,
+                conf_threshold=args.conf,
+                use_mock_camera=args.mock
+            )
+            system.camera.connect()
+            
+            image = system.camera.capture()
+            if image is None:
+                print("Camera capture failed")
+                system.camera.disconnect()
+                return
+            
+            result = system.detector.detect(image)
+            annotated = system.detector.draw_results(image, result)
+            
+            if result['is_defective']:
+                print(f"REJECT - {result['defect_count']} defect(s)")
+                for d in result['defects']:
+                    print(f"  {d['class']}: {d['confidence']:.1%}")
+            else:
+                print("PASS - No defects")
+            print(f"Inference time: {result['inference_time_ms']:.1f}ms")
+            
+            cv2.namedWindow("Defect Detection - Camera Capture", cv2.WINDOW_NORMAL)
+            cv2.imshow("Defect Detection - Camera Capture", annotated)
+            print("\nPress 's' to save, any other key to close...")
+            key = cv2.waitKey(0) & 0xFF
+            if key == ord('s'):
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                save_path = f"logs/capture_{timestamp}.png"
+                os.makedirs("logs", exist_ok=True)
+                cv2.imwrite(save_path, annotated)
+                print(f"Saved: {save_path}")
+            cv2.destroyAllWindows()
+            system.camera.disconnect()
+        return
+
+    # ---- MODE: LIVE ----
+    if args.mode == 'live':
+        system = ProductionInspectionSystem(
+            model_path=args.model,
+            config_path=args.config,
+            conf_threshold=args.conf,
+            use_mock_camera=args.mock
+        )
         system.start()
-    else:
-        # Single inspection
-        system.camera.connect()
-        result = system.inspect_once()
-        system.print_result(result)
-        system.camera.disconnect()
 
 
 if __name__ == "__main__":

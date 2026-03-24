@@ -9,7 +9,7 @@ def download_dataset(api_key, workspace, project, version=1):
     try:
         rf = Roboflow(api_key=api_key)
         project = rf.workspace(workspace).project(project)
-        dataset = project.version(version).download("yolov11") # Using yolov11 format as per requirements
+        dataset = project.version(version).download("yolov11") # Using yolov11 format (supported by yolov26m)
         
         # Move dataset to data dir if needed or it will download to current dir
         # Roboflow usually downloads to a folder named after the project

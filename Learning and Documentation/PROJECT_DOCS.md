@@ -99,7 +99,8 @@ Image_detection/
 │   ├── yolo_beginner_guide.md
 │   ├── yolo_complete_guide.md
 │   └── understanding_code/       # Script-by-script explanations
-│       └── Camera_capture.md
+│       ├── Camera_capture.md
+│       └── Validate_images.md
 │
 ├── runs/                         # Ultralytics training/val/detect outputs
 │   └── detect/

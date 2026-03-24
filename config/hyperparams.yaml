@@ -3,7 +3,7 @@
 # ============================================================
 # Usage with train_model.py:
 #   Load a preset and pass values to training function.
-#   Or use Ultralytics auto-tune: yolo tune model=yolo11m.pt data=config/dataset.yaml
+#   Or use Ultralytics auto-tune: yolo tune model=311m.pt data=config/dataset.yaml
 #
 # Each preset includes a description of WHEN to use it
 # and WHY the values differ from baseline.
@@ -21,8 +21,8 @@ baseline:
   patience: 20
 
   # Batch & image size
-  batch_size: 16
-  img_size: 640
+  batch_size: 4
+  img_size: 1024
 
   # Optimizer
   optimizer: "auto"        # Ultralytics auto-selects SGD or AdamW
@@ -63,16 +63,16 @@ small_dataset:
   when_to_use: "When total dataset is under 200 images (current scenario: ~130 images)"
 
   # Training duration — train longer with more patience
-  epochs: 300
+  epochs: 100
   patience: 50
 
   # Batch & image size — smaller batch = more gradient updates per epoch
-  batch_size: 8
-  img_size: 640
+  batch_size: 4
+  img_size: 1024
 
   # Optimizer — lower LR to prevent overfitting on small data
   optimizer: "AdamW"       # AdamW converges better on small datasets
-  lr0: 0.001               # 10x lower than baseline
+  lr0: 0.0005              # 10x lower than baseline
   lrf: 0.01
   momentum: 0.937
   weight_decay: 0.001      # Stronger regularization
@@ -96,7 +96,7 @@ small_dataset:
   hsv_v: 0.5
 
   # Other
-  amp: true
+  amp: false
   workers: 4               # Fewer workers to avoid data loading bottlenecks
 
 
@@ -108,12 +108,12 @@ fine_detail:
   when_to_use: "When defects are small relative to the image, or fine surface details matter"
 
   # Training duration
-  epochs: 150
+  epochs: 80
   patience: 30
 
   # Batch & image size — 1280px captures more detail, but needs more GPU RAM
-  batch_size: 4            # Reduced due to larger images
-  img_size: 1280           # 2x resolution for fine details
+  batch_size: 4          # Reduced due to larger images
+  img_size: 1024           # 2x resolution for fine details
 
   # Optimizer
   optimizer: "auto"
@@ -157,8 +157,8 @@ fast_training:
   patience: 10
 
   # Batch & image size
-  batch_size: 16
-  img_size: 640
+  batch_size: 4
+  img_size: 1024
 
   # Optimizer
   optimizer: "auto"
@@ -188,6 +188,67 @@ fast_training:
   # Other
   amp: true
   workers: 8
+
+
+# ---- PRESET 5: good_vs_rust_optimized ----
+# Tuned to improve "Good" class detection when the model already
+# detects "Rust" well.  Key ideas:
+#   1. cls=1.5 — force model to focus 3× more on classification vs bounding-box
+#   2. Gentle colour augmentation — heavy hsv shifts make Good look like Rust
+#   3. freeze=10 — protect pretrained backbone features on a small dataset
+#   4. close_mosaic=20 — let the model see clean, unaugmented images earlier
+good_vs_rust_optimized:
+  description: "Optimized for improving Good class detection alongside Rust"
+  when_to_use: "When Good class recall/precision is lower than Rust classes"
+
+  # Training duration — same 100 epochs as before
+  epochs: 150
+  patience: 60
+
+  # Batch & image size — 1024px for high-detail defect detection
+  batch_size: 2
+  img_size: 1280
+
+  # Optimizer — AdamW with moderate LR
+  optimizer: "AdamW"
+  lr0: 0.0008
+  lrf: 0.01
+  momentum: 0.937
+  weight_decay: 0.0008
+  warmup_epochs: 5.0
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.05
+
+  # Loss weights (CRITICAL — this is the biggest lever)
+  cls: 1.5              # 3× default — forces classification focus
+  box: 7.5              # Keep default
+  dfl: 1.5              # Keep default
+
+  # Freeze backbone layers (transfer learning)
+  freeze: 10    
+  cos_lr: true        # Lock first 10 backbone layers
+
+  # Mosaic control
+  close_mosaic: 30      # Disable mosaic 20 epochs before end
+
+  # Augmentation — GENTLE to preserve Good surface consistency
+  degrees: 10.0
+  translate: 0.1
+  scale: 0.2
+  shear: 0.0
+  perspective: 0.0
+  flipud: 0.0
+  fliplr: 0.5
+  mosaic: 0.5            # Was 1.0 — less mosaic distortion
+  mixup: 0.0             # Disabled — mixing Good+Rust confuses model
+  copy_paste: 0.0
+  hsv_h: 0.01
+  hsv_s: 0.2             # Was 0.7 — BIG reduction
+  hsv_v: 0.2             # Was 0.4
+
+  # Other
+  amp: true
+  workers: 4
 
 
 # ============================================================
