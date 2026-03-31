@@ -11,7 +11,7 @@
 - **Model**: `YOLOv11m` (medium variant) — also tested with `YOLO26n` (nano)
 - **Version**: `0.2.0`
 - **Status**: `In Progress`
-- **Last Updated**: `2026-03-05`
+- **Last Updated**: `2026-03-24`
 - **Repository**: [sabareesh-h/detection](https://github.com/sabareesh-h/detection)
 
 ---
@@ -60,23 +60,15 @@ Image_detection/
 │   ├── system_config.json        # Camera, model, and inspection settings
 │   └── hyperparams.yaml          # Hyperparameter tuning presets
 │
-├── dataset/
-│   ├── raw/                      # Raw captured images (unprocessed)
-│   ├── images/
-│   │   ├── train/                # Training images
-│   │   ├── val/                  # Validation images
-│   │   └── test/                 # Test images
-│   └── labels/
-│       ├── train/                # YOLO-format annotation TXT files (train)
-│       ├── val/                  # YOLO-format annotation TXT files (val)
-│       └── test/                 # YOLO-format annotation TXT files (test)
+├── dataset/                      # ⚠️ UNUSED — kept as archive only
+│                                 # All active data is in scripts/dataset/
 │
 ├── scripts/
 │   ├── camera_capture.py         # Basler camera capture utility
 │   ├── validate_images.py        # Image quality validation
 │   ├── split_dataset.py          # Train/val/test splitting
 │   ├── download_dataset.py       # Download dataset from Roboflow
-│   ├── prepare_dataset.py        # Dataset preparation pipeline
+│   ├── prepare_dataset.py        # Dataset preparation + split pipeline
 │   ├── augment_dataset.py        # Offline dataset augmentation (albumentations)
 │   ├── train_model.py            # YOLOv11m training script
 │   ├── evaluate_model.py         # Full model evaluation report
@@ -84,11 +76,22 @@ Image_detection/
 │   ├── run_pipeline.py           # ⭐ Master pipeline (chains all steps)
 │   ├── defect_detector.py        # Production inference pipeline
 │   ├── export_model.py           # Model export (ONNX, TensorRT, etc.)
-│   └── webcam_demo.py            # Quick webcam inference demo
+│   ├── webcam_demo.py            # Quick webcam inference demo
+│   └── dataset/                  # ⭐ SINGLE dataset location (all active data)
+│       ├── raw/                  # camera_capture.py saves here
+│       ├── images/
+│       │   ├── train/            # Training images (originals + augmented)
+│       │   ├── val/              # Validation images (originals only)
+│       │   └── test/             # Test images (originals only)
+│       └── labels/
+│           ├── train/            # YOLO .txt labels (train)
+│           ├── val/              # YOLO .txt labels (val)
+│           └── test/             # YOLO .txt labels (test)
 │
 ├── Learning and Documentation/
 │   ├── PROJECT_DOCS.md           # Full project documentation (this file)
 │   ├── PROBLEMS_AND_SOLUTIONS.md # Problems faced & solutions log
+│   ├── file_flow.md              # ⭐ How files move from capture → detection
 │   ├── Coding_understanding.md   # Line-by-line code explanations
 │   ├── camera_technical_specifications_guide.md
 │   ├── comprehensive_project_roadmap.md
@@ -156,18 +159,25 @@ pip install ultralytics opencv-python numpy pyyaml matplotlib pandas seaborn pol
 ### `config/dataset.yaml` — Dataset Configuration
 
 ```yaml
-path: C:/Users/RohithSuryaCKM/Downloads/Projects/Image_detection/dataset
+path: C:/Users/RohithSuryaCKM/Downloads/Projects/Image_detection/scripts/dataset
 train: images/train
 val: images/val
 test: images/test
 
 names:
-  0: Good
-  1: Flat_line
-  2: Unwash
+  0: Good(Top)
+  1: Rust(Top)
+  2: Rust(Mid)
+  3: Rust(Bottom)
+  4: Rust(Thread)
+  5: Good(Mid)
+  6: Good(Thread)
+  7: Good(Bottom)
 
-nc: 3
+nc: 8
 ```
+
+> **Note**: `path` points to `scripts/dataset/` (updated 2026-03-24). The root `dataset/` folder is an unused archive.
 
 ### `config/system_config.json` — System Configuration
 
@@ -261,11 +271,10 @@ python scripts/run_pipeline.py --mode full --preset fast_training --multiplier 2
 | Step | Script / Tool              | Command                                              |
 |------|----------------------------|------------------------------------------------------|
 | 1    | Capture images             | `python scripts/camera_capture.py`                   |
-| 2    | Validate image quality     | `python scripts/validate_images.py dataset/raw`      |
-| 3    | Download dataset (Roboflow)| `python scripts/download_dataset.py`                 |
-| 4    | Prepare dataset            | `python scripts/prepare_dataset.py`                  |
-| 5    | Split train/val/test       | `python scripts/split_dataset.py dataset/raw --output dataset` |
-| 6    | Augment training data      | `python scripts/augment_dataset.py --input dataset/images/train --labels dataset/labels/train --multiplier 5` |
+| 2    | Annotate in CVAT           | `start_cvat.bat` → open `http://localhost:8080`      |
+| 3    | Prepare + split dataset    | `python scripts/prepare_dataset.py`                  |
+| 4    | Augment **train only**     | `python scripts/augment_dataset.py --input scripts/dataset/images/train --labels scripts/dataset/labels/train --multiplier 3` |
+| 5    | Validate image quality     | `python scripts/validate_images.py scripts/dataset/raw` |
 | 7    | Annotate (CVAT)            | `start_cvat.bat` → open `http://localhost:8080`      |
 | 8    | Train model                | `python scripts/train_model.py --data config/dataset.yaml --epochs 100` |
 | 9    | Evaluate model             | `python scripts/evaluate_model.py --model models/best.pt` |
@@ -322,11 +331,17 @@ After each training run, follow this cycle to continuously improve:
 
 ### `augment_dataset.py`
 - Offline augmentation using **albumentations** library
-- 3 intensity presets: `light`, `medium`, `heavy`
 - Preserves YOLO bounding box annotations through augmentations
-- Augmentations: rotation, brightness/contrast, Gaussian noise/blur, CLAHE, random shadow, HSV jitter
+- **Current augmentations** (updated 2026-03-24):
+  - `Rotate(±15°, p=0.5)` — simulates part placement angle variation
+  - `HorizontalFlip(p=0.5)` — parts can appear mirrored
+  - `VerticalFlip(p=0.3)` — parts can be placed inverted
+  - `GaussNoise(p=0.4)` — simulates Basler camera sensor noise
+  - `GaussianBlur(p=0.3)` — simulates slight camera focus variation
+- **CLAHE removed**: images are already greyscaled with rust-aware CLAHE during capture; re-applying would bias the model toward over-enhanced contrast
 - **Preview mode** (`--preview`) to visualize augmentations before saving
-- Generates N augmented copies per image (`--multiplier`)
+- Generates N augmented copies per image (`--multiplier`, default=3)
+- ⚠️ **Run AFTER `prepare_dataset.py`** — augment only `images/train/`, never val or test
 
 ### `train_model.py`
 - Trains **YOLOv11m** on the defect detection dataset
@@ -425,6 +440,8 @@ After each training run, follow this cycle to continuously improve:
 | GPU environment requires `defect_env_gpu311` (Python 3.11) with CUDA 12.8 PyTorch | Low | Documented |
 | Blackwell GPU (RTX PRO 500) needs `cu128` — cu121/cu124/cu126 fail with "no kernel image" | High | Resolved |
 | Basler SDK (`pypylon`) requires manual download of Pylon SDK | Low | Documented |
+| Two `dataset/` folders caused confusion — root `dataset/` and `scripts/dataset/` | Medium | Resolved (config unified to `scripts/dataset/`) |
+| CLAHE in augment_dataset.py was redundant after greyscale capture — over-enhanced contrast | Medium | Resolved (CLAHE removed, replaced with flips + noise + blur) |
 
 > **Agent Note**: Add new bugs here as discovered. Update status as they are resolved.
 
@@ -433,8 +450,14 @@ After each training run, follow this cycle to continuously improve:
 ## 📋 Changelog
 
 ### [Unreleased]
-- Exploring additional defect classes
 - Dashboard for inspection monitoring
+
+### v0.3.0 — `2026-03-24`
+- **Unified dataset path**: `config/dataset.yaml` and `prepare_dataset.py` both now point to `scripts/dataset/` — eliminates dual-folder confusion
+- **Updated augmentation pipeline**: removed CLAHE (redundant post-greyscale), added `HorizontalFlip`, `VerticalFlip`, `GaussNoise`, `GaussianBlur`
+- **Greyscale integration**: `camera_capture.py` now applies rust-aware greyscale + CLAHE at capture time (choose original or greyscale mode at startup)
+- **Documented correct workflow order**: `prepare_dataset.py` first (split), then `augment_dataset.py` on train only — val/test remain original
+- Added `Learning and Documentation/file_flow.md` — visual map of how files move from capture to detection
 
 ### v0.2.1 — `2026-03-05`
 - Fixed Blackwell GPU support — requires PyTorch cu128 (CUDA 12.8)

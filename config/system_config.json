@@ -8,7 +8,7 @@
     },
     "model": {
         "weights_path": "models/best.pt",
-        "confidence_threshold": 0.5,
+        "confidence_threshold": 3.0,
         "iou_threshold": 0.45,
         "image_size": 640
     },

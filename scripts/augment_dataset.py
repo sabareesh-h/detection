@@ -1,3 +1,13 @@
+# scripts to run
+
+# Opening Environment   - .\defect_env_gpu311\Scripts\activate
+
+# Directing to scripts - cd scripts
+
+# Augmenting dataset - python augment_dataset.py
+
+
+
 """
 Offline Dataset Augmentation Script for Defect Detection
 Generates augmented copies of training images with preserved YOLO bounding boxes.
@@ -30,65 +40,73 @@ except ImportError:
 def read_yolo_labels(label_path: str) -> List[List[float]]:
     """
     Read YOLO-format label file.
-    
-    Each line: class_id x_center y_center width height (all normalized 0-1)
-    
+    Supports both bounding-box (5 values) and polygon/segmentation (variable values) formats.
+
     Returns:
-        List of [class_id, x_center, y_center, width, height]
+        List of [class_id, x1, y1, x2, y2, ...] — all coords clamped to [0, 1]
     """
     labels = []
     if not os.path.exists(label_path):
         return labels
-    
+
     with open(label_path, 'r') as f:
         for line in f:
             line = line.strip()
             if line:
                 parts = line.split()
                 class_id = int(parts[0])
-                bbox = [float(x) for x in parts[1:5]]
-                labels.append([class_id] + bbox)
+                # Read ALL coordinate values (works for both bbox and polygon)
+                coords = [max(0.0, min(1.0, float(v))) for v in parts[1:]]
+                labels.append([class_id] + coords)
     return labels
 
 
 def write_yolo_labels(label_path: str, labels: List[List[float]]):
-    """Write YOLO-format label file."""
+    """Write YOLO-format label file, preserving all coords (bbox or polygon)."""
     with open(label_path, 'w') as f:
         for label in labels:
             class_id = int(label[0])
-            bbox = label[1:5]
-            f.write(f"{class_id} {bbox[0]:.6f} {bbox[1]:.6f} {bbox[2]:.6f} {bbox[3]:.6f}\n")
+            coords = ' '.join(f'{v:.6f}' for v in label[1:])
+            f.write(f'{class_id} {coords}\n')
 
 
 # ============================================================
 # AUGMENTATION PIPELINES
 # ============================================================
 
-def get_augmentation_pipeline(level: str = "medium") -> A.Compose:
+def get_augmentation_pipeline(level: str = "medium") -> 'A.Compose':
     """
     Build an augmentation pipeline suited for factory defect detection.
-    
-    Applies only:
-        - Rotation: Up to ±15°
-        - CLAHE: Contrast Limited Adaptive Histogram Equalization
-        
-    Returns:
-        albumentations Compose pipeline with bbox support
+    Uses keypoint_params so that polygon vertices are transformed correctly
+    (flips, rotations) — works for both bbox and segmentation label formats.
+
+    Applies:
+        - Rotation:          Up to ±15° (simulates part placement angle variation)
+        - HorizontalFlip:    Mirror image (parts can appear mirrored)
+        - VerticalFlip:      Upside-down flip (parts can be placed inverted)
+        - GaussNoise:        Subtle sensor noise (simulates camera noise)
+        - GaussianBlur:      Slight defocus blur (simulates camera focus variation)
+
+    Note: CLAHE is intentionally excluded — images are already greyscaled with
+    rust-aware CLAHE applied during capture (camera_capture.py).
     """
     if not ALBUMENTATIONS_AVAILABLE:
         raise ImportError("albumentations is required for augmentation")
-    
+
     transforms = [
         A.Rotate(limit=15, border_mode=cv2.BORDER_REFLECT_101, p=0.5),
-        A.CLAHE(clip_limit=3.0, tile_grid_size=(8, 8), p=0.5),
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.3),
+        A.GaussNoise(std_range=(0.01, 0.05), p=0.4),
+        A.GaussianBlur(blur_limit=(3, 5), p=0.3),
     ]
 
     pipeline = A.Compose(
         transforms,
-        bbox_params=A.BboxParams(
-            format='yolo',
-            label_fields=['class_ids'],
-            min_visibility=0.3,  # Drop boxes that become <30% visible after augmentation
+        keypoint_params=A.KeypointParams(
+            format='xy',                 # absolute pixel coords
+            label_fields=['kp_labels'],  # tracks which annotation each point belongs to
+            remove_invisible=True,       # drop points that go outside the image
         )
     )
     return pipeline
@@ -103,22 +121,15 @@ def augment_single_image(
     label_path: str,
     output_images_dir: str,
     output_labels_dir: str,
-    pipeline: A.Compose,
+    pipeline: 'A.Compose',
     multiplier: int = 5,
     start_index: int = 0
 ) -> int:
     """
     Generate augmented copies of a single image + label pair.
-    
-    Args:
-        image_path: Path to source image
-        label_path: Path to corresponding YOLO label file
-        output_images_dir: Directory to save augmented images
-        output_labels_dir: Directory to save augmented labels
-        pipeline: Augmentation pipeline
-        multiplier: Number of augmented copies to generate
-        start_index: Starting index for naming augmented files
-        
+    Preserves polygon annotations by transforming each vertex through
+    the augmentation pipeline (flip, rotate, etc.).
+
     Returns:
         Number of successfully generated augmentations
     """
@@ -127,16 +138,21 @@ def augment_single_image(
         print(f"  WARNING: Cannot read image: {image_path}")
         return 0
 
-    # Read YOLO labels
+    h, w = image.shape[:2]
     labels = read_yolo_labels(label_path)
-    
-    # Separate class IDs and bboxes for albumentations
-    if labels:
-        class_ids = [int(lbl[0]) for lbl in labels]
-        bboxes = [lbl[1:5] for lbl in labels]
-    else:
-        class_ids = []
-        bboxes = []
+
+    # Flatten all polygon vertices into a single keypoints list.
+    # kp_labels tracks which annotation index each keypoint belongs to
+    # so we can reconstruct the polygons after augmentation.
+    all_keypoints = []
+    kp_labels = []
+    ann_class_ids = []
+    for ann_idx, lbl in enumerate(labels):
+        ann_class_ids.append(int(lbl[0]))
+        coords = lbl[1:]  # [x1, y1, x2, y2, ...] normalized
+        for i in range(0, len(coords) - 1, 2):
+            all_keypoints.append((coords[i] * w, coords[i + 1] * h))
+            kp_labels.append(ann_idx)
 
     stem = Path(image_path).stem
     ext = Path(image_path).suffix
@@ -146,28 +162,39 @@ def augment_single_image(
         try:
             augmented = pipeline(
                 image=image,
-                bboxes=bboxes,
-                class_ids=class_ids
+                keypoints=all_keypoints,
+                kp_labels=kp_labels
             )
 
-            aug_image = augmented['image']
-            aug_bboxes = augmented['bboxes']
-            aug_class_ids = augmented['class_ids']
+            aug_img = augmented['image']
+            aug_h, aug_w = aug_img.shape[:2]
+            aug_kps = augmented['keypoints']
+            aug_kp_labels = augmented['kp_labels']
+
+            # Group transformed keypoints back per annotation
+            ann_points: dict = {}
+            for pt, ann_idx in zip(aug_kps, aug_kp_labels):
+                ann_points.setdefault(ann_idx, []).append(pt)
+
+            # Rebuild label lines — skip annotations with <3 visible points
+            aug_labels = []
+            for ann_idx, pts in ann_points.items():
+                if len(pts) < 3:
+                    continue
+                class_id = ann_class_ids[int(ann_idx)]  # cast: albumentations may return float
+                coords = []
+                for x, y in pts:
+                    coords.append(max(0.0, min(1.0, x / aug_w)))
+                    coords.append(max(0.0, min(1.0, y / aug_h)))
+                aug_labels.append([class_id] + coords)
 
             # Build output filename
             aug_name = f"{stem}_aug{start_index + i:03d}"
             aug_image_path = os.path.join(output_images_dir, f"{aug_name}{ext}")
             aug_label_path = os.path.join(output_labels_dir, f"{aug_name}.txt")
 
-            # Save augmented image
-            cv2.imwrite(aug_image_path, aug_image)
-
-            # Save augmented labels
-            aug_labels = []
-            for cls_id, bbox in zip(aug_class_ids, aug_bboxes):
-                aug_labels.append([cls_id] + list(bbox))
+            cv2.imwrite(aug_image_path, aug_img)
             write_yolo_labels(aug_label_path, aug_labels)
-
             generated += 1
 
         except Exception as e:
@@ -339,8 +366,27 @@ def preview_augmentations(
             continue
 
         labels = read_yolo_labels(label_path) if os.path.exists(label_path) else []
+        h, w = image.shape[:2]
+
+        # Derive bboxes from polygon points for visualization (min/max of x,y)
+        def poly_to_bbox(coords):
+            """Convert polygon coords [x1,y1,...] → yolo bbox [xc,yc,bw,bh]"""
+            xs = coords[0::2]
+            ys = coords[1::2]
+            x1, x2, y1, y2 = min(xs), max(xs), min(ys), max(ys)
+            return [(x1+x2)/2, (y1+y2)/2, x2-x1, y2-y1]
+
         class_ids = [int(lbl[0]) for lbl in labels]
-        bboxes = [lbl[1:5] for lbl in labels]
+        bboxes = [poly_to_bbox(lbl[1:]) for lbl in labels]
+
+        # Flatten polygon vertices for keypoint-based augmentation
+        all_keypoints = []
+        kp_labels = []
+        for ann_idx, lbl in enumerate(labels):
+            coords = lbl[1:]
+            for i in range(0, len(coords) - 1, 2):
+                all_keypoints.append((coords[i] * w, coords[i + 1] * h))
+                kp_labels.append(ann_idx)
 
         # Draw original
         original_viz = draw_bboxes(image.copy(), bboxes, class_ids, colors)
@@ -348,9 +394,21 @@ def preview_augmentations(
 
         for i in range(augmentations_per_sample):
             try:
-                augmented = pipeline(image=image, bboxes=bboxes, class_ids=class_ids)
-                aug_viz = draw_bboxes(augmented['image'].copy(), augmented['bboxes'],
-                                      augmented['class_ids'], colors)
+                augmented = pipeline(image=image, keypoints=all_keypoints, kp_labels=kp_labels)
+                aug_img = augmented['image']
+                aug_h, aug_w = aug_img.shape[:2]
+                # Group keypoints back and derive bboxes for display
+                ann_pts: dict = {}
+                for pt, ann_idx in zip(augmented['keypoints'], augmented['kp_labels']):
+                    ann_pts.setdefault(ann_idx, []).append(pt)
+                aug_bboxes, aug_cls = [], []
+                for ann_idx, pts in ann_pts.items():
+                    if len(pts) < 2:
+                        continue
+                    norm_coords = [v for pt in pts for v in (pt[0]/aug_w, pt[1]/aug_h)]
+                    aug_bboxes.append(poly_to_bbox(norm_coords))
+                    aug_cls.append(class_ids[ann_idx])
+                aug_viz = draw_bboxes(aug_img.copy(), aug_bboxes, aug_cls, colors)
                 cv2.imshow(f"Augmented #{i+1}: {stem}", cv2.resize(aug_viz, (640, 480)))
             except Exception as e:
                 print(f"  Augmentation failed: {e}")
@@ -414,7 +472,7 @@ Examples:
                         help='Output images directory (default: same as input — in-place)')
     parser.add_argument('--output-labels', default=None,
                         help='Output labels directory (default: same as labels — in-place)')
-    parser.add_argument('--multiplier', type=int, default=2,
+    parser.add_argument('--multiplier', type=int, default=3,
                         help='Number of augmented copies per image (default: 2)')
     parser.add_argument('--level', choices=['light', 'medium', 'heavy'], default='medium',
                         help='Augmentation intensity (default: medium)')

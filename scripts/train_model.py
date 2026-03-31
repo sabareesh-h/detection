@@ -1,3 +1,20 @@
+# scripts to run
+
+# Opening Environment   - .\defect_env_gpu311\Scripts\activate
+
+# Directing to scripts - cd scripts
+
+# Training model - python train_model.py --preset good_vs_rust_optimized --name my_first_wandb_run
+
+# Training model segmentation - python train_model.py --preset good_vs_rust_optimized --name my_seg_run --task segment --resume --weights runs/segment/models/my_seg_run/weights/last.pt
+
+# continue training model - python train_model.py --preset good_vs_rust_optimized --resume --weights "C:\Users\RohithSuryaCKM\Downloads\Projects\Image_detection\scripts\runs\detect\models\my_first_wandb_run6\weights\last.pt"
+
+# To open wandb with training - python train_model.py --preset good_vs_rust_optimized --resume --weights "C:\Users\RohithSuryaCKM\Downloads\Projects\Image_detection\scripts\runs\detect\models\my_first_wandb_run2\weights\last.pt" --wandb-run-id my_first_wandb_run2_20260325_153009
+
+# To not open wandb with training - python train_model.py --preset good_vs_rust_optimized --resume --weights "C:\Users\RohithSuryaCKM\Downloads\Projects\Image_detection\scripts\runs\detect\models\my_first_wandb_run6\weights\last.pt" --no-wandb 
+
+
 """
 YOLOv11m Training Script for Defect Detection
 Reads hyperparameters from config/hyperparams.yaml so all tuning
@@ -9,6 +26,7 @@ import sys
 import yaml
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 
 import torch
 
@@ -23,6 +41,100 @@ try:
 except ImportError:
     ULTRALYTICS_AVAILABLE = False
     print("Error: ultralytics not installed. Run: pip install ultralytics")
+
+
+def _add_overfitting_callbacks(model):
+    """
+    Register a custom per-epoch wandb callback that logs the overfitting gap
+    (val_loss - train_loss) for box and cls losses.
+
+    A gap below 0.05 → healthy.  Growing above 0.10 → overfitting.
+    """
+    try:
+        import wandb
+    except ImportError:
+        return  # wandb not installed — skip silently
+
+    def _log_gap(trainer):
+        """Called at the end of every fit epoch by ultralytics."""
+        if not wandb.run:
+            return
+
+        m = getattr(trainer, 'metrics', {}) or {}
+
+        # Val losses come from the validator (always present after epoch 1)
+        val_box = m.get('val/box_loss')
+        val_cls = m.get('val/cls_loss')
+
+        # Train losses — ultralytics stores them in trainer.tloss (Tensor[3])
+        # Order: [box_loss, cls_loss, dfl_loss]
+        train_box = train_cls = None
+        tloss = getattr(trainer, 'tloss', None)
+        if tloss is not None:
+            try:
+                import torch
+                t = tloss.detach().cpu() if isinstance(tloss, torch.Tensor) else None
+                if t is not None and t.numel() >= 2:
+                    train_box = float(t[0])
+                    train_cls = float(t[1])
+            except Exception:
+                pass
+
+        log_dict = {}
+        if val_box is not None and train_box is not None:
+            log_dict['overfitting/box_gap']  = round(float(val_box) - train_box, 4)
+        if val_cls is not None and train_cls is not None:
+            log_dict['overfitting/cls_gap']  = round(float(val_cls) - train_cls, 4)
+        if log_dict:
+            log_dict['overfitting/epoch'] = trainer.epoch
+            wandb.log(log_dict)
+
+    def _log_all_metrics(trainer):
+        """Explicitly log all training metrics each epoch so WandB charts are populated."""
+        if not wandb.run:
+            return
+
+        m = getattr(trainer, 'metrics', {}) or {}
+        epoch = trainer.epoch
+        log_dict = {'epoch': epoch}
+
+        # --- Training losses (from tloss tensor: [box, cls, dfl]) ---
+        tloss = getattr(trainer, 'tloss', None)
+        if tloss is not None:
+            try:
+                t = tloss.detach().cpu() if hasattr(tloss, 'detach') else None
+                if t is not None and t.numel() >= 3:
+                    log_dict['train/box_loss'] = round(float(t[0]), 5)
+                    log_dict['train/cls_loss'] = round(float(t[1]), 5)
+                    log_dict['train/dfl_loss'] = round(float(t[2]), 5)
+            except Exception:
+                pass
+
+        # --- Validation losses ---
+        for key in ('val/box_loss', 'val/cls_loss', 'val/dfl_loss'):
+            if m.get(key) is not None:
+                log_dict[key] = round(float(m[key]), 5)
+
+        # --- Performance metrics ---
+        for key in ('metrics/mAP50(B)', 'metrics/mAP50-95(B)',
+                    'metrics/precision(B)', 'metrics/recall(B)'):
+            if m.get(key) is not None:
+                clean_key = key.replace('(B)', '')
+                log_dict[clean_key] = round(float(m[key]), 5)
+
+        # --- Learning rate ---
+        optimizer = getattr(trainer, 'optimizer', None)
+        if optimizer and optimizer.param_groups:
+            log_dict['lr/pg0'] = optimizer.param_groups[0]['lr']
+            if len(optimizer.param_groups) > 1:
+                log_dict['lr/pg1'] = optimizer.param_groups[1]['lr']
+
+        if len(log_dict) > 1:  # more than just 'epoch'
+            wandb.log(log_dict)
+
+    model.add_callback('on_fit_epoch_end', _log_gap)
+    model.add_callback('on_fit_epoch_end', _log_all_metrics)
+    print("[wandb] Callbacks registered: overfitting gaps + full metrics (loss, mAP, LR)")
 
 
 def check_environment():
@@ -93,7 +205,10 @@ def train_yolo_model(
     project: str = "models",
     name: str = None,
     resume: bool = False,
-    weights: str = "yolo26m.pt"
+    weights: str = "yolo26m.pt",
+    wandb_run_id: Optional[str] = None,
+    no_wandb: bool = False,
+    task: str = "detect",
 ):
     """
     Train YOLO model on defect detection dataset.
@@ -169,14 +284,46 @@ def train_yolo_model(
         name = f"defect_yolo26m_{timestamp}"
 
     print(f"\nStarting training: {name}")
+    print(f"Task:           {task.upper()} ({'bounding box' if task == 'detect' else 'polygon mask'})")
+    print(f"Weights:        {weights}")
     print(f"Dataset config: {data_config}")
     print(f"Epochs: {epochs}, Batch size: {batch_size}, Image size: {img_size}")
     print(f"Optimizer: {optimizer}, LR0: {lr0}, Weight Decay: {weight_decay}")
     print(f"Loss weights: cls={cls_weight}, box={box_weight}, dfl={dfl_weight}")
     print(f"Freeze: {freeze}, Close mosaic: {close_mosaic}")
 
+    # ---- Initialise WandB (must happen BEFORE model.train so Ultralytics picks it up) ----
+    if no_wandb:
+        # Disable wandb entirely via env var so Ultralytics integration also skips it
+        os.environ["WANDB_MODE"] = "disabled"
+        print("[wandb] Disabled (--no-wandb flag set)")
+    else:
+        try:
+            import wandb
+            if wandb_run_id:
+                # Resume a specific existing run
+                wandb.init(
+                    project="defect-detection",
+                    id=wandb_run_id,
+                    resume="allow",
+                )
+                print(f"[wandb] Resuming run: {wandb_run_id}")
+            else:
+                wandb.init(
+                    project="defect-detection",
+                    name=name,
+                    resume="allow",
+                )
+                print(f"[wandb] Started new run: {wandb.run.name}")
+        except ImportError:
+            print("[wandb] wandb not installed — skipping. Install with: pip install wandb")
+
     # Load pretrained model
     model = YOLO(weights)
+
+    # Register custom wandb overfitting-gap callback (only when wandb is active)
+    if not no_wandb:
+        _add_overfitting_callbacks(model)
 
     # Training — every value comes from hyperparams.yaml
     results = model.train(
@@ -357,6 +504,13 @@ Examples:
                        help='Experiment name')
     parser.add_argument('--resume', action='store_true',
                        help='Resume training from last checkpoint')
+    parser.add_argument('--no-wandb', action='store_true',
+                       help='Disable Weights & Biases logging entirely')
+    parser.add_argument('--wandb-run-id', default=None,
+                       help='WandB run ID to resume (find it in the WandB dashboard URL or run list)')
+    parser.add_argument('--task', choices=['detect', 'segment'], default='detect',
+                       help='Training task: detect (bounding box) or segment (polygon mask). '
+                            'Auto-selects pretrained weights unless --weights is given.')
     parser.add_argument('--validate-only', type=str, default=None,
                        help='Only validate model at given path')
 
@@ -395,8 +549,14 @@ Examples:
     if args.patience is not None:
         hp['patience'] = args.patience
 
-    # ---- Determine weights ----
-    weights = args.weights if args.weights else 'yolo26m.pt'
+    # ---- Determine weights based on task ----
+    if args.weights:
+        weights = args.weights
+    elif args.task == 'segment':
+        weights = 'yolo26m-seg.pt'
+    else:
+        weights = 'yolo26m.pt'
+    print(f"[task={args.task}] Using weights: {weights}")
 
     # ---- Train ----
     train_yolo_model(
@@ -405,7 +565,10 @@ Examples:
         device=device,
         weights=weights,
         name=args.name,
-        resume=args.resume
+        resume=args.resume,
+        wandb_run_id=args.wandb_run_id,
+        no_wandb=args.no_wandb,
+        task=args.task,
     )
 
 

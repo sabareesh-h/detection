@@ -78,3 +78,6 @@ python scripts/dataset/run_greyscale_good_scratch.py
 
 
 python greyscale_converter.py -i C:\Users\RohithSuryaCKM\Downloads\Projects\Image_detection\scripts\dataset\raw\scratch\scratch_20260321_140555_603192.png
+
+
+python defect_detector.py --mode video --model runs/detect/models/my_first_wandb_run6/weights/best.pt --source C:\Users\RohithSuryaCKM\Downloads\Projects\Image_detection\Recording_2026-03-18_103052.mp4

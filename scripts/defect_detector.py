@@ -1,3 +1,19 @@
+# scripts to run
+
+# Opening Environment   - .\defect_env_gpu311\Scripts\activate
+
+# Directing to scripts - cd scripts
+
+# Detecting defects - python defect_detector.py --mode live --model runs/detect/my_first_wandb_run/weights/best.pt --config config/system_config.json --conf 0.03
+
+# Detecting Defect with greyscale - python defect_detector_overlay_greyscale_switch.py --mode live --model runs/detect/models/my_first_wandb_run6/weights/best.pt --display grey
+
+
+# Detecting live - python defect_detector.py --mode live --model runs/detect/models/my_first_wandb_run6/weights/best.pt 
+
+# Detecting Image - python defect_detector.py --mode image --model runs/detect/models/my_first_wandb_run6/weights/best.pt --source C:\Users\RohithSuryaCKM\Downloads\Projects\Image_detection\scripts\test_images\test_image_1.jpg
+
+# detecting video - python defect_detector.py --mode video --model runs/detect/models/my_first_wandb_run6/weights/best.pt --source C:\Users\RohithSuryaCKM\Downloads\Projects\Image_detection\scripts\test_images\test_video_1.mp4
 """
 Defect Detection - Production Inference Pipeline
 Real-time defect detection using trained YOLOv11m model with Basler camera
@@ -21,7 +37,7 @@ except ImportError:
     ULTRALYTICS_AVAILABLE = False
 
 # Import camera module
-from camera_capture import get_camera, BaslerCamera, MockCamera
+from camera_capture import get_camera, BaslerCamera, MockCamera, convert_to_greyscale
 
 
 class DefectDetector:
@@ -60,10 +76,14 @@ class DefectDetector:
         print(f"Loading model: {model_path}")
         self.model = YOLO(model_path)
         self.class_names = self.model.names
-        
+
+        # Auto-detect whether this is a detection or segmentation model
+        self.is_seg = getattr(self.model, 'task', 'detect') == 'segment'
+        print(f"Model type: {'SEGMENTATION (mask)' if self.is_seg else 'DETECTION (bbox)'}")
+
         # Warmup model
         self._warmup()
-        
+
         print(f"Detector initialized. Classes: {list(self.class_names.values())}")
     
     def _load_config(self, config_path: str) -> dict:
@@ -98,7 +118,10 @@ class DefectDetector:
     
     def detect(self, image: np.ndarray) -> Dict:
         """
-        Run defect detection on image
+        Run defect detection on image.
+        The frame is first converted to rust-aware greyscale (CLAHE + rust
+        darkening) — matching the preprocessing used during training —
+        before being passed to the YOLO model.
         
         Args:
             image: BGR image as numpy array
@@ -108,9 +131,12 @@ class DefectDetector:
         """
         start_time = time.time()
         
-        # Run inference
+        # ── Greyscale pre-processing (same algorithm as camera_capture) ──
+        grey_image = convert_to_greyscale(image)
+        
+        # Run inference on greyscale frame
         results = self.model(
-            image,
+            grey_image,
             conf=self.conf_threshold,
             iou=self.iou_threshold,
             device=self.device,
@@ -122,15 +148,25 @@ class DefectDetector:
         # Parse results
         defects = []
         for result in results:
-            for box in result.boxes:
+            masks = result.masks  # None for detection models
+            for i, box in enumerate(result.boxes):
                 class_id = int(box.cls)
-                defects.append({
-                    'class': self.class_names[class_id],
-                    'class_id': class_id,
-                    'confidence': round(float(box.conf), 4),
-                    'bbox': [round(x, 2) for x in box.xyxy.tolist()[0]],
-                    'bbox_normalized': [round(x, 4) for x in box.xywhn.tolist()[0]]
-                })
+                defect = {
+                    'class':          self.class_names[class_id],
+                    'class_id':       class_id,
+                    'confidence':     round(float(box.conf), 4),
+                    'bbox':           [round(x, 2) for x in box.xyxy.tolist()[0]],
+                    'bbox_normalized':[round(x, 4) for x in box.xywhn.tolist()[0]],
+                    'mask_polygon':   None,
+                }
+                # Extract mask polygon for segmentation models
+                if masks is not None and i < len(masks):
+                    try:
+                        xy = masks.xy[i]          # (N, 2) array of pixel coords
+                        defect['mask_polygon'] = xy.tolist()
+                    except Exception:
+                        pass
+                defects.append(defect)
         
         # Sort by confidence (highest first)
         defects.sort(key=lambda x: x['confidence'], reverse=True)
@@ -144,12 +180,12 @@ class DefectDetector:
         }
     
     def detect_from_file(self, image_path: str) -> Dict:
-        """Load image from file and run detection"""
+        """Load image from file and run detection (greyscale pre-processing applied automatically)."""
         image = cv2.imread(image_path)
         if image is None:
             return {'error': f'Failed to load image: {image_path}'}
         
-        result = self.detect(image)
+        result = self.detect(image)   # greyscale conversion happens inside detect()
         result['image_path'] = image_path
         return result
     
@@ -177,8 +213,9 @@ class DefectDetector:
                 ret, frame = cap.read()
                 if not ret:
                     break
-                    
-                result = self.detect(frame)
+                
+                # Convert to greyscale before inference; draw results on original frame
+                result = self.detect(frame)          # greyscale applied inside detect()
                 annotated = self.draw_results(frame, result)
                 
                 if out is not None:
@@ -226,17 +263,25 @@ class DefectDetector:
         for defect in result.get('defects', []):
             bbox = defect['bbox']
             x1, y1, x2, y2 = [int(x) for x in bbox]
-            
-            color = colors.get(defect['class'], default_color)
-            
-            # Draw bounding box
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, box_thickness)
-            
-            # Draw label
+            color = colors.get(defect['class'].lower(), default_color)
+
+            mask_poly = defect.get('mask_polygon')
+            if mask_poly and len(mask_poly) >= 3:
+                # ── Segmentation model: draw filled semi-transparent mask ──
+                pts = np.array(mask_poly, dtype=np.int32)
+                overlay = annotated.copy()
+                cv2.fillPoly(overlay, [pts], color)
+                cv2.addWeighted(overlay, 0.35, annotated, 0.65, 0, annotated)
+                cv2.polylines(annotated, [pts], isClosed=True, color=color, thickness=box_thickness)
+            else:
+                # ── Detection model: draw plain bounding box ──
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), color, box_thickness)
+
+            # Draw label (same for both modes)
             label = f"{defect['class']}: {defect['confidence']:.1%}"
             label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
             cv2.rectangle(annotated, (x1, y1 - label_size[1] - label_pad), (x1 + label_size[0] + 4, y1), color, -1)
-            cv2.putText(annotated, label, (x1 + 2, y1 - int(label_pad / 2)), 
+            cv2.putText(annotated, label, (x1 + 2, y1 - int(label_pad / 2)),
                        cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), thickness)
         
         # Draw overall status
@@ -529,7 +574,7 @@ Examples:
     parser.add_argument('--config', default='config/system_config.json',
                        help='Path to system config')
     parser.add_argument('--conf', type=float, default=0.03,
-                       help='Confidence threshold (default: 0.05)')
+                       help='Confidence threshold (default: 0.3)')
     parser.add_argument('--mock', action='store_true',
                        help='Use mock camera for testing (no hardware needed)')
     

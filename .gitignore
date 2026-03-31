@@ -52,3 +52,21 @@ desktop.ini
 
 # Gemini / AI Agent
 .gemini/
+
+# Weights & Biases
+wandb/
+scripts/wandb/
+
+# Logs & evaluation reports
+logs/
+scripts/logs/
+
+# Dataset images/labels (large files — tracked via raw/ only)
+scripts/dataset/
+
+# Temp files
+tmp_*.txt
+tmp_*.py
+
+# Pyright / type checker
+pyrightconfig.json

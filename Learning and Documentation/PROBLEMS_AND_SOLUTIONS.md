@@ -11,10 +11,10 @@
 |----------|-------------|----------|------|
 | Environment & Setup | 5 | 5 | 0 |
 | Training & Model | 3 | 3 | 0 |
-| Data & Annotation | 2 | 2 | 0 |
+| Data & Annotation | 4 | 4 | 0 |
 | Deployment & Infra | 1 | 1 | 0 |
 
-**Last Updated**: `2026-03-05`
+**Last Updated**: `2026-03-24`
 
 ---
 
@@ -232,6 +232,53 @@ Always build experiment tracking into your ML pipeline from the start. Even a si
 ---
 
 ## 📁 Data & Annotation
+
+### P-011: Dual `dataset/` Folders — Confusing Active vs Archive Data
+- **Date**: 2026-03-24
+- **Severity**: 🟡 Medium
+- **Status**: ✅ Resolved
+
+**Problem**:  
+Two separate `dataset/` folders existed with identical structures (`images/`, `labels/`, `raw/`), causing confusion about where to add new images and which folder the training script actually reads from:
+- `Image_detection/dataset/` — root level
+- `Image_detection/scripts/dataset/` — scripts level (where actual data lived)
+
+**Root Cause**:  
+`config/dataset.yaml` pointed to the root `dataset/` folder, but all data (images, labels, augmented files) was actually in `scripts/dataset/`. `prepare_dataset.py` was also configured to write its output to the root `dataset/` folder, meaning running it again would recreate the confusion.
+
+**Solution**:  
+1. Updated `config/dataset.yaml` → `path:` now points to `scripts/dataset/`
+2. Updated `prepare_dataset.py` → `OUTPUT_DIR` now points to `scripts/dataset/`
+3. The root `dataset/` folder is now an unused archive (safe to delete)
+4. Created `Learning and Documentation/file_flow.md` documenting the full data path
+
+**Lesson Learned**:  
+Keep all active data in **one location**. Use a single config file (`dataset.yaml`) as the source of truth for dataset paths, and make sure every script that writes data reads its output path from the same config.
+
+---
+
+### P-012: CLAHE Applied Twice — Over-Enhanced Greyscale Images
+- **Date**: 2026-03-24
+- **Severity**: 🟡 Medium
+- **Status**: ✅ Resolved
+
+**Problem**:  
+`augment_dataset.py` applied CLAHE (Contrast Limited Adaptive Histogram Equalization) as an augmentation. However, images were already being greyscale-converted with rust-aware CLAHE applied during capture in `camera_capture.py`. This meant CLAHE was being applied twice, making the model overfit to artificially high-contrast images.
+
+**Root Cause**:  
+The augmentation script was written before the greyscale-with-CLAHE capture mode was added to `camera_capture.py`. The two scripts were not designed in coordination.
+
+**Solution**:  
+Removed `A.CLAHE` from `augment_dataset.py`. Replaced with augmentations that simulate real physical variation without distorting defect appearance:
+- `A.HorizontalFlip(p=0.5)` — part orientation variation
+- `A.VerticalFlip(p=0.3)` — part orientation variation
+- `A.GaussNoise(var_limit=(5.0, 20.0), p=0.4)` — camera sensor noise
+- `A.GaussianBlur(blur_limit=(3, 5), p=0.3)` — slight defocus
+
+**Lesson Learned**:  
+When preprocessing is applied during data capture (e.g., CLAHE in greyscale conversion), remove the same preprocessing from offline augmentation. Applying it twice teaches the model to expect over-processed images that won't appear in production.
+
+---
 
 ### P-008: CVAT Exports Didn't Match Image Directories
 - **Date**: 2026-02-16

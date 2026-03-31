@@ -202,8 +202,8 @@ good_vs_rust_optimized:
   when_to_use: "When Good class recall/precision is lower than Rust classes"
 
   # Training duration — same 100 epochs as before
-  epochs: 150
-  patience: 60
+  epochs: 100
+  patience: 50
 
   # Batch & image size — 1024px for high-detail defect detection
   batch_size: 2
@@ -229,7 +229,7 @@ good_vs_rust_optimized:
   cos_lr: true        # Lock first 10 backbone layers
 
   # Mosaic control
-  close_mosaic: 30      # Disable mosaic 20 epochs before end
+  close_mosaic: 20      # Disable mosaic 20 epochs before end
 
   # Augmentation — GENTLE to preserve Good surface consistency
   degrees: 10.0
@@ -237,14 +237,14 @@ good_vs_rust_optimized:
   scale: 0.2
   shear: 0.0
   perspective: 0.0
-  flipud: 0.0
+  flipud: 0.3
   fliplr: 0.5
   mosaic: 0.5            # Was 1.0 — less mosaic distortion
   mixup: 0.0             # Disabled — mixing Good+Rust confuses model
   copy_paste: 0.0
-  hsv_h: 0.01
-  hsv_s: 0.2             # Was 0.7 — BIG reduction
-  hsv_v: 0.2             # Was 0.4
+  hsv_h: 0.0
+  hsv_s: 0.0             # Was 0.7 — BIG reduction
+  hsv_v: 0.3             # Was 0.4
 
   # Other
   amp: true
