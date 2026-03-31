@@ -1,1 +1,106 @@
+name: Dent detection polygon annotation, bounding box training.
+description: I first annotated the defect only using polygon tool and then i converted that into bounding box annotation. because of structure i already built.
+title: "Dent detection specific area"
+labels: ["training-log"]
 
+body:
+
+  - type: input
+    id: 0005
+  - Date: 31-06-2026
+    label: WHAT I CHANGED FROM LAST RUN AND WHY
+      placeholder: |
+        Change: Changed the bounding box on full surface to specific area.
+        Reason: Good surface is also coming, i don't want that. So moved to specific area  
+        Expected Impact: Reduce false positives.
+    validations:
+      required: true
+
+    id: dataset
+    attributes:
+      label: Scratch
+      placeholder: |
+        Total Images: 200
+        Class Ratio:
+        Data Source: basler camera
+        Train/test/ Val Split: 70/15/15 
+
+    id: annotation
+    attributes:
+      label: ANNOTATION DETAILS
+      placeholder: |
+        Annotation Type: Polygon 
+        Tool Used: Polygon tool
+
+    id: model
+    attributes:
+      label: MODEL CONFIG
+      placeholder: |
+        YOLO Version: yolo26m  
+        Pretrained: COCO
+        Image Size: 1280
+        Batch Size: 2
+        Epochs Planned:  200
+        Device: 0
+
+    id: hyperparams
+    attributes:
+      label: HYPERPARAMETERS
+      placeholder: |
+        Learning Rate: 0.0008
+        Freeze Layers: 10
+        cls_pw: 0
+        Mosaic: 0.5
+        Copy Paste: 0
+        Augmentations: 0
+        WHY:
+
+
+    id: results
+    attributes:
+      label: RESULTS
+      placeholder: |
+        Best Epoch:
+        Rust mAP50:
+        Dent mAP50:
+        Precision:
+        Recall:
+        mAP50-95:
+        Train Loss:
+        Val Loss:
+        Overfitting Gap:
+
+
+    id: confusion
+    attributes:
+      label: CONFUSION MATRIX INSIGHTS
+      placeholder: |
+        Rust → Background:
+        Dent → Background:
+        Rust ↔ Dent Confusion:
+        Notes:
+
+ 
+    id: real_world
+    attributes:
+      label: REAL-WORLD TEST RESULTS
+      placeholder: |
+        Confidence Threshold:
+        Correct Detections:
+        Missed Defects:
+        False Positives:
+        Weak Cases:
+
+  - type: textarea
+    id: observations
+    attributes:
+      label: OBSERVATIONS
+      placeholder: |
+        -
+
+  - type: textarea
+    id: next_action
+    attributes:
+      label: NEXT ACTION
+      placeholder: |
+        -
