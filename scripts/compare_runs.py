@@ -1,3 +1,12 @@
+# scripts to run
+
+# Opening Environment   - .\defect_env_gpu311\Scripts\activate
+
+# Directing to scripts - cd scripts
+
+# Comparing runs - python compare_runs.py --runs runs/detect/models
+
+
 """
 Training Run Comparison Script
 Scans Ultralytics training run directories, extracts metrics from results.csv,

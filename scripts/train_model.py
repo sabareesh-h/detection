@@ -14,7 +14,6 @@
 
 # To not open wandb with training - python train_model.py --preset good_vs_rust_optimized --resume --weights "C:\Users\RohithSuryaCKM\Downloads\Projects\Image_detection\scripts\runs\detect\models\my_first_wandb_run6\weights\last.pt" --no-wandb 
 
-
 """
 YOLOv11m Training Script for Defect Detection
 Reads hyperparameters from config/hyperparams.yaml so all tuning

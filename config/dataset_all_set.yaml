@@ -1,0 +1,26 @@
+# Defect Detection Dataset Configuration
+# For YOLOv11m Training
+
+# Dataset paths (update these to your actual paths)
+path: C:/Users/RohithSuryaCKM/Downloads/Projects/Image_detection/scripts/dataset
+train: images/train
+val: images/val
+test: images/test
+
+# Class names - matching CVAT annotation labels
+names:
+  0: Good(Top)
+  1: Rust(Top)
+  2: Rust(Mid)
+  3: Rust(Bottom)
+  4: Rust(Thread)
+  5: Good(Mid)
+  6: Good(Thread)
+  7: Good(Bottom)
+  8: Scratch(Top)
+  9: Scratch(Mid)
+  10: Scratch(Thread)
+  11: Scratch(Bottom)
+
+# Number of classes
+nc: 12

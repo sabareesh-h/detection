@@ -252,13 +252,9 @@ class DefectDetector:
         label_pad = int(10 * scale)
         
         colors = {
-            'scratch': (0, 255, 255),      # Yellow
-            'crack': (0, 0, 255),          # Red
-            'dent': (255, 0, 255),         # Magenta
-            'discoloration': (255, 165, 0), # Orange
-            'contamination': (0, 255, 0),   # Green
+            's': (255, 255, 255),   # Green
         }
-        default_color = (255, 255, 255)
+        default_color = (0, 255, 255)
         
         for defect in result.get('defects', []):
             bbox = defect['bbox']
@@ -459,16 +455,22 @@ class ProductionInspectionSystem:
         if not self.camera.connect():
             print("Failed to connect to camera")
             return
+
+        # Start continuous grabbing for high-FPS inference.
+        # capture() will now just retrieve the already-buffered latest frame
+        # instead of restarting the hardware stream on every single frame.
+        self.camera.start_streaming()
         
         self._running = True
         print("\n" + "="*50)
         print("LIVE INSPECTION MODE")
-        print("Press 'q' to quit | 's' to save snapshot")
+        print("Press 'q' to quit | 's' to save snapshot | 'v' to toggle greyscale view")
         print("="*50 + "\n")
         
         frame_count = 0
         fps_start = time.time()
         display_fps = 0.0
+        show_grey = False          # V-key toggle: False = colour, True = greyscale
         
         try:
             while self._running:
@@ -478,12 +480,22 @@ class ProductionInspectionSystem:
                     print("Camera capture failed, retrying...")
                     time.sleep(0.5)
                     continue
-                
-                # Run detection
+                 # Resize image first so the CPU doesn't choke on the greyscale filter
+                image = cv2.resize(image, (1280, 1280))
+                # Run detection (always on greyscale internally)
                 result = self.detector.detect(image)
-                
-                # Draw bounding boxes on the frame
-                annotated = self.detector.draw_results(image, result)
+
+                # Decide which frame to annotate for display
+                if show_grey:
+                    # Convert to greyscale and back to BGR so coloured overlays still work
+                    from camera_capture import convert_to_greyscale
+                    grey_bgr = convert_to_greyscale(image)   # returns 3-ch BGR-grey
+                    display_frame = grey_bgr
+                else:
+                    display_frame = image
+
+                # Draw bounding boxes on the chosen display frame
+                annotated = self.detector.draw_results(display_frame, result)
                 
                 # Calculate FPS
                 frame_count += 1
@@ -498,6 +510,14 @@ class ProductionInspectionSystem:
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
                 cv2.putText(annotated, f"Defects: {result['defect_count']}", (10, annotated.shape[0] - 50),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+                # HUD: display mode indicator (top-right corner)
+                mode_label = "[V] GREYSCALE" if show_grey else "[V] COLOUR"
+                mode_color = (200, 200, 200) if show_grey else (0, 200, 255)
+                (lw, lh), _ = cv2.getTextSize(mode_label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                cv2.putText(annotated, mode_label,
+                            (annotated.shape[1] - lw - 10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, mode_color, 2)
                 
                 # Show live feed
                 cv2.namedWindow("Defect Detection - Live Feed", cv2.WINDOW_NORMAL)
@@ -508,6 +528,10 @@ class ProductionInspectionSystem:
                 if key == ord('q'):
                     print("\nQuitting live feed...")
                     break
+                elif key == ord('v'):
+                    show_grey = not show_grey
+                    label = "GREYSCALE" if show_grey else "COLOUR"
+                    print(f"  [V] Display mode switched to: {label}")
                 elif key == ord('s'):
                     # Save snapshot
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -519,11 +543,13 @@ class ProductionInspectionSystem:
                     print(f"  Snapshot saved: {snap_path}")
                 
                 # Log to database
-                self.logger.log(result)
+                # if result['is_defective']:
+                #     self.logger.log(result)
                 
         except KeyboardInterrupt:
             print("\nStopping inspection...")
         finally:
+            self.camera.stop_streaming()   # Stop continuous grab before cleanup
             cv2.destroyAllWindows()
             self.stop()
     

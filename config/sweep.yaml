@@ -1,0 +1,66 @@
+# ============================================================
+# wandb Sweep Configuration — Defect Detection Hyperparameter Search
+# ============================================================
+# Run ONCE to create the sweep:
+#   wandb sweep config/sweep.yaml
+#   (It will print a sweep ID, e.g. "sweepid: abc123")
+#
+# Then start an agent to run trials:
+#   wandb agent <your-username>/models/<sweep-id>
+#
+# Each agent trial trains for 30 epochs (fast) to compare presets.
+# After ~10 trials, pick the best config and run the full 220 epochs.
+# ============================================================
+
+program: scripts/train_model.py
+method: bayes           # bayes = smart search, learns from previous trials
+                        # alternatives: random, grid
+
+# Metric to MAXIMIZE (wandb picks hyperparams to push this up)
+metric:
+  name: val/mAP50
+  goal: maximize
+
+# Early termination — kills bad runs early to save GPU time
+early_terminate:
+  type: hyperband
+  min_iter: 10          # Give each run at least 10 epochs before killing it
+
+# ---- Hyperparameters to search ----
+# These override values from good_vs_rust_optimized preset
+parameters:
+
+  # Learning rate — most impactful single parameter
+  lr0:
+    distribution: log_uniform_values
+    min: 0.0002
+    max: 0.002
+
+  # Classification loss weight — key for Good vs Rust balance
+  # Higher = model focuses more on getting class right over exact box position
+  cls:
+    values: [1.0, 1.5, 2.0, 2.5]
+
+  # L2 regularization — prevents overfitting on small dataset
+  weight_decay:
+    distribution: log_uniform_values
+    min: 0.0003
+    max: 0.002
+
+  # Backbone freeze depth — 0 = full fine-tune, 10 = freeze first 10 layers
+  freeze:
+    values: [0, 5, 10, 15]
+
+  # Mosaic augmentation probability — lower = cleaner training images
+  mosaic:
+    values: [0.3, 0.5, 0.7, 1.0]
+
+  # Fixed parameters (don't search these — keep from good_vs_rust_optimized)
+  preset:
+    value: "good_vs_rust_optimized"
+
+  epochs:
+    value: 30           # Short runs for sweep comparison
+
+  name:
+    value: "sweep_trial"

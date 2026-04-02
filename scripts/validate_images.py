@@ -1,3 +1,14 @@
+# scripts to run
+
+# Opening Environment   - .\defect_env_gpu311\Scripts\activate
+
+# Directing to scripts - cd scripts
+
+# Validating images - python validate_images.py
+
+
+
+
 """
 Image Quality Validation Script
 Validates captured images before adding to training dataset

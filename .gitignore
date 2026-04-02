@@ -67,6 +67,9 @@ scripts/dataset/
 # Temp files
 tmp_*.txt
 tmp_*.py
+args_dump.txt
+git_status_*.txt
+job_*_annotations_*/
 
 # Pyright / type checker
 pyrightconfig.json

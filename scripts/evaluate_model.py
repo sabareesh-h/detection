@@ -1,3 +1,13 @@
+# scripts to run
+
+# Opening Environment   - .\defect_env_gpu311\Scripts\activate
+
+# Directing to scripts - cd scripts
+
+# Evaluating model - python evaluate_model.py --model runs/detect/my_first_wandb_run/weights/best.pt --data config/dataset.yaml --device 0
+
+
+
 """
 Model Evaluation Report Script for Defect Detection
 Generates a comprehensive evaluation report: confusion matrix, per-class metrics,

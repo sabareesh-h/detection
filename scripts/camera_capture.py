@@ -1,4 +1,15 @@
+# scripts to run
+
+# Opening Environment   - .\defect_env_gpu311\Scripts\activate
+
+# Directing to scripts - cd scripts
+
+# Opening camera  - python camera_capture.py
+
+
+
 """
+
 Basler Camera Capture Utility
 Captures images from Basler camera for defect detection dataset collection.
 """
@@ -98,6 +109,7 @@ class BaslerCamera:
         self.config = self._load_config(config_path)
         self.camera = None
         self.converter = None
+        self._streaming = False   # True when continuous grab is active (e.g. defect_detector)
         
     def _load_config(self, config_path: str) -> dict:
         """Load camera configuration from JSON file"""
@@ -170,7 +182,11 @@ class BaslerCamera:
             return None
         
         try:
-            self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
+            # Only start/stop grabbing if we are NOT in continuous streaming mode.
+            # In streaming mode (used by defect_detector.py), grabbing is already
+            # running — starting it again would raise a pypylon exception.
+            if not self._streaming:
+                self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
             
             grab_result = self.camera.RetrieveResult(
                 self.config['timeout_ms'],
@@ -183,18 +199,42 @@ class BaslerCamera:
                 img_array = image.GetArray()
                 
                 grab_result.Release()
-                self.camera.StopGrabbing()
+                if not self._streaming:
+                    self.camera.StopGrabbing()
                 
                 return img_array
             else:
                 print(f"Grab failed: {grab_result.ErrorCode}")
                 grab_result.Release()
-                self.camera.StopGrabbing()
+                if not self._streaming:
+                    self.camera.StopGrabbing()
                 return None
                 
         except Exception as e:
             print(f"Capture error: {e}")
             return None
+
+    def start_streaming(self):
+        """
+        Start continuous grabbing for high-FPS inference.
+        Call this once before your detection loop (e.g. in defect_detector.py).
+        Dataset collection (camera_capture.py) does NOT call this and keeps the
+        original per-frame start/stop behaviour.
+        """
+        if self.camera is None:
+            print("Error: Camera not connected — call connect() first.")
+            return
+        if not self._streaming:
+            self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
+            self._streaming = True
+            print("Camera: continuous streaming started (high-FPS mode)")
+
+    def stop_streaming(self):
+        """Stop continuous grabbing started by start_streaming()."""
+        if self._streaming and self.camera is not None:
+            self.camera.StopGrabbing()
+            self._streaming = False
+            print("Camera: continuous streaming stopped")
     
     def capture_and_save(self, output_dir: str, label: str, 
                          metadata: dict = None) -> str:
@@ -256,6 +296,14 @@ class MockCamera:
     def connect(self) -> bool:
         print("MockCamera connected (simulated)")
         return True
+
+    def start_streaming(self):
+        """No-op for mock camera — included so defect_detector.py works with --mock flag."""
+        print("MockCamera: streaming started (no-op)")
+
+    def stop_streaming(self):
+        """No-op for mock camera."""
+        print("MockCamera: streaming stopped (no-op)")
     
     def capture(self) -> np.ndarray:
         """Generate a test pattern image"""
@@ -396,7 +444,13 @@ def collect_dataset_interactive():
                         print("✗ Capture failed. Try again.")
                         break
 
-                    accepted = preview_image(image, title=f"Preview — {label} [{save_mode}]")
+                    # Apply greyscale conversion before previewing if requested
+                    if save_mode == "greyscale":
+                        display_image = convert_to_greyscale(image)
+                    else:
+                        display_image = image
+
+                    accepted = preview_image(display_image, title=f"Preview — {label} [{save_mode}]")
 
                     if accepted:
                         save_dir = Path(output_dir) / label
@@ -406,14 +460,7 @@ def collect_dataset_interactive():
                         filename = f"{label}_{timestamp}.png"
                         filepath = save_dir / filename
 
-                        # Apply greyscale conversion if requested
-                        if save_mode == "greyscale":
-                            image_to_save = convert_to_greyscale(image)
-                            print(f"  [greyscale] Converting before save...")
-                        else:
-                            image_to_save = image
-
-                        cv2.imwrite(str(filepath), image_to_save)
+                        cv2.imwrite(str(filepath), display_image)
                         print(f"  ✓ Saved {label} ({save_mode}) → {filepath}")
                         break
                     else:

@@ -1,3 +1,15 @@
+# scripts to run
+
+# Opening Environment   - .\defect_env_gpu311\Scripts\activate
+
+# Directing to scripts - cd scripts
+
+# Preparing dataset - python prepare_dataset.py
+
+
+
+
+
 """
 Dataset Preparation Script
 Merges CVAT YOLO exports with original images into a unified YOLO dataset structure.
@@ -28,7 +40,7 @@ ANNOTATION_SOURCES = [
 CLASS_NAMES = {0: "Good(Top)", 1: "Rust(Top)", 2: "Rust(Mid)", 3: "Rust(Bottom)", 4: "Rust(Thread)", 5: "Good(Mid)", 6: "Good(Thread)", 7: "Good(Bottom)"}
 
 # Output dataset directory
-OUTPUT_DIR = PROJECT_ROOT / "dataset"
+OUTPUT_DIR = PROJECT_ROOT / "scripts" / "dataset"
 
 # Split ratios
 TRAIN_RATIO = 0.70
