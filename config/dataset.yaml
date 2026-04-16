@@ -9,7 +9,7 @@ test: images/test
 
 # Class names - matching CVAT annotation labels
 names:
-  0: S
+  0: Scratch
 
 # Number of classes
 nc: 1

@@ -197,6 +197,16 @@ fast_training:
 #   2. Gentle colour augmentation — heavy hsv shifts make Good look like Rust
 #   3. freeze=10 — protect pretrained backbone features on a small dataset
 #   4. close_mosaic=20 — let the model see clean, unaugmented images earlier
+#
+# NaN FIX (2026-04-08):
+#   - amp: false        → AMP (fp16) causes NaN overflow when resuming from a
+#                         checkpoint trained without AMP or when gradients are
+#                         naturally large in early epochs.
+#   - warmup_bias_lr: 0.01 → Was 0.05; high bias-LR on resume caused gradient spikes.
+#   - erasing: 0.0     → With batch=2, random erasing can produce empty-crop
+#                         batches where loss collapses to NaN.
+#   - auto_augment disabled → randaugment conflicts with manual hsv=0 settings
+#                         and can produce extreme pixel values that blow up loss.
 good_vs_rust_optimized:
   description: "Optimized for improving Good class detection alongside Rust"
   when_to_use: "When Good class recall/precision is lower than Rust classes"
@@ -217,7 +227,7 @@ good_vs_rust_optimized:
   weight_decay: 0.0008
   warmup_epochs: 5.0
   warmup_momentum: 0.8
-  warmup_bias_lr: 0.05
+  warmup_bias_lr: 0.01  # [NaN FIX] Reduced from 0.05 — prevents gradient spike on resume
 
   # Loss weights (CRITICAL — this is the biggest lever)
   cls: 1.5              # 3× default — forces classification focus
@@ -225,8 +235,8 @@ good_vs_rust_optimized:
   dfl: 1.5              # Keep default
 
   # Freeze backbone layers (transfer learning)
-  freeze: 10    
-  cos_lr: true        # Lock first 10 backbone layers
+  freeze: 10
+  cos_lr: true          # Cosine LR schedule
 
   # Mosaic control
   close_mosaic: 20      # Disable mosaic 20 epochs before end
@@ -245,9 +255,11 @@ good_vs_rust_optimized:
   hsv_h: 0.0
   hsv_s: 0.0             # Was 0.7 — BIG reduction
   hsv_v: 0.3             # Was 0.4
+  erasing: 0.0           # [NaN FIX] Disabled — with batch=2 can give empty-crop NaN loss
+  auto_augment: ""       # [NaN FIX] Disabled randaugment — conflicts with manual hsv=0 settings
 
   # Other
-  amp: true
+  amp: False             # [NaN FIX] AMP disabled — fp16 causes NaN overflow on resume/Blackwell GPU
   workers: 4
 
 
