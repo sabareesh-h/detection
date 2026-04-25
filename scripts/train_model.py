@@ -1,25 +1,17 @@
-# scripts to run
-
-# Opening Environment   - .\defect_env_gpu311\Scripts\activate
-
-# Directing to scripts - cd scripts
-
-# Training model - python train_model.py --preset good_vs_rust_optimized --name my_first_wandb_run
-
-# Training model segmentation - python train_model.py --preset good_vs_rust_optimized --name my_seg_run --task segment --resume --weights runs/segment/models/my_seg_run/weights/last.pt
-
-# continue training model - python train_model.py --preset good_vs_rust_optimized --resume --weights "C:\Users\RohithSuryaCKM\Downloads\Projects\Image_detection\scripts\runs\detect\models\my_first_wandb_run6\weights\last.pt"
-
-# To open wandb with training - python train_model.py --preset good_vs_rust_optimized --resume --weights "C:\Users\RohithSuryaCKM\Downloads\Projects\Image_detection\scripts\runs\detect\models\my_first_wandb_run2\weights\last.pt" --wandb-run-id my_first_wandb_run2_20260325_153009
-
-# To not open wandb with training - python train_model.py --preset good_vs_rust_optimized --resume --weights "C:\Users\RohithSuryaCKM\Downloads\Projects\Image_detection\scripts\runs\detect\models\my_first_wandb_run6\weights\last.pt" --no-wandb 
-
-# Training model - python train_model.py --preset good_vs_rust_optimized --name my_seg_run --task segment --no-wandb
-
 """
-YOLOv11m Training Script for Defect Detection
-Reads hyperparameters from config/hyperparams.yaml so all tuning
-is done in one place.
+=============================================================
+  train_model.py  --  Defect detection pipeline script
+=============================================================
+HOW TO USE
+----------
+python train_model.py
+
+FLAGS
+-----
+(No flags defined or --help not available)
+python train_model.py --preset good_vs_rust_optimized --name my_run --task segment --no-wandb
+python train_model.py --tune --tune-iterations 20 --epochs 10 --task segment --name defect_yolo26m_20260425_104500 --resume
+=============================================================
 """
 
 import os
@@ -35,17 +27,61 @@ os.environ["WANDB_API_KEY"] = "local-wandb_v1_DmdXPEGxHT56z64nSBNhzuOK5U3_IcckKX
 
 import torch
 
+# ============================================================
+# GPU TENSOR CORE OPTIMIZATIONS (Critical for Blackwell GPUs)
+# ============================================================
+# By default, PyTorch uses strict FP32 math which BYPASSES the GPU's
+# dedicated Tensor Cores entirely. These settings unlock them:
+#
+#   allow_tf32  → Uses TF32 precision for matmul/conv ops.
+#                 TF32 = same effective accuracy as FP32 for neural networks,
+#                 but runs on Tensor Cores = up to 8x faster on Blackwell.
+#   benchmark   → Runs a quick search on startup to find the single fastest
+#                 CUDA kernel for your specific GPU + input size combination.
+#                 One-time cost (~2 seconds), then faster every epoch after.
+#   matmul precision 'high' → Explicitly tells PyTorch to prefer speed over
+#                 strict numerical precision for matrix multiplications.
+# ============================================================
+torch.backends.cudnn.benchmark = True          # Auto-find fastest CUDA kernel
+torch.backends.cuda.matmul.allow_tf32 = True   # Use Tensor Cores for matmul
+torch.backends.cudnn.allow_tf32 = True         # Use Tensor Cores for convolutions
+torch.set_float32_matmul_precision('high')     # Prefer speed over strict FP32
+
 # Project root = parent of 'scripts/' directory
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_HYPERPARAMS = str(PROJECT_ROOT / "config" / "hyperparams.yaml")
 DEFAULT_DATASET_YAML = str(PROJECT_ROOT / "config" / "dataset.yaml")
 
 try:
-    from ultralytics import YOLO
+    from ultralytics import YOLO, RTDETR
     ULTRALYTICS_AVAILABLE = True
 except ImportError:
     ULTRALYTICS_AVAILABLE = False
     print("Error: ultralytics not installed. Run: pip install ultralytics")
+
+
+def load_model(weights: str):
+    """
+    Dynamically load a YOLO or RT-DETR model based on the weights filename.
+
+    Rules:
+      - If the weights string contains 'rtdetr', load using the RTDETR class.
+      - Otherwise, load using the YOLO class (covers all YOLOv8/v11 variants).
+
+    This allows seamless switching between architectures without changing any
+    other part of the training/inference pipeline.
+
+    Examples:
+      load_model('yolo26m.pt')        -> YOLO('yolo26m.pt')
+      load_model('rtdetr-l.pt')       -> RTDETR('rtdetr-l.pt')
+      load_model('rtdetr-x.pt')       -> RTDETR('rtdetr-x.pt')
+    """
+    if 'rtdetr' in str(weights).lower():
+        print(f"[Model] Detected RT-DETR weights — loading with RTDETR class: {weights}")
+        return RTDETR(weights)
+    else:
+        print(f"[Model] Loading with YOLO class: {weights}")
+        return YOLO(weights)
 
 
 def _add_gradient_clipping(model, max_norm=10.0):
@@ -248,6 +284,8 @@ def train_yolo_model(
     wandb_run_id: Optional[str] = None,
     no_wandb: bool = False,
     task: str = "detect",
+    tune: bool = False,
+    tune_iterations: int = 50,
 ):
     """
     Train YOLO model on defect detection dataset.
@@ -320,6 +358,15 @@ def train_yolo_model(
     erasing      = hyperparams.get('erasing', 0.4)     # default matches Ultralytics default
     auto_augment = hyperparams.get('auto_augment', 'randaugment')  # default matches Ultralytics default
 
+    # ---- [NaN FIX] Automated Resume Overrides ----
+    if resume:
+        print("\n[NaN FIX] Resume mode detected! Automatically applying NaN prevention overrides.")
+        amp = False
+        warmup_bias_lr = min(warmup_bias_lr, 0.01)
+        erasing = 0.0
+        auto_augment = ""
+
+
     # Generate experiment name if not provided
     if name is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -360,8 +407,17 @@ def train_yolo_model(
         except ImportError:
             print("[wandb] wandb not installed — skipping. Install with: pip install wandb")
 
-    # Load pretrained model
-    model = YOLO(weights)
+    # ---- RT-DETR guard: segmentation is not supported ----
+    is_rtdetr = 'rtdetr' in str(weights).lower()
+    if is_rtdetr and task == 'segment':
+        print("\n[ERROR] RT-DETR does not support segmentation (--task segment).")
+        print("        RT-DETR is a detection-only model.")
+        print("        Your segmentation labels will be auto-converted to bounding boxes.")
+        print("        Remove --task segment and re-run to train RT-DETR as a detector.")
+        sys.exit(1)
+
+    # Load pretrained model (auto-detects YOLO vs RT-DETR from filename)
+    model = load_model(weights)
 
     # ---- Always register gradient clipping (regardless of wandb) ----
     # This is the primary NaN defence: caps every gradient to ±10 and
@@ -372,6 +428,36 @@ def train_yolo_model(
     # Register custom wandb overfitting-gap callback (only when wandb is active)
     if not no_wandb:
         _add_overfitting_callbacks(model)
+
+    # ---- Ray Tune Hyperparameter Search ----
+    if tune:
+        print("\n" + "="*60)
+        print(f"STARTING HYPERPARAMETER TUNING ({tune_iterations} iterations)")
+        print("="*60)
+        print("Ray Tune will run multiple training sessions to find optimal hyperparameters.")
+        
+        results = model.tune(
+            data=data_config,
+            epochs=epochs,
+            iterations=tune_iterations,
+            optimizer=optimizer,
+            device=device,
+            project=project,
+            name=name + "_tune",
+            exist_ok=True,  # Set to True to allow resuming in the same directory
+            resume=resume,  # Pass the resume flag down to the Tuner
+            # Pass RAM/VRAM constraints so Tune doesn't use Ultralytics defaults (batch=16, workers=8)
+            batch=batch_size,
+            imgsz=img_size,
+            workers=workers,
+            amp=amp
+        )
+        
+        print("\n" + "="*60)
+        print("TUNING COMPLETE")
+        print("="*60)
+        print(f"Check the {project}/{name}_tune directory for best_hyperparameters.yaml")
+        return results
 
     # Training — every value comes from hyperparams.yaml
     results = model.train(
@@ -563,6 +649,10 @@ Examples:
                             'Auto-selects pretrained weights unless --weights is given.')
     parser.add_argument('--validate-only', type=str, default=None,
                        help='Only validate model at given path')
+    parser.add_argument('--tune', action='store_true',
+                       help='Run Ray Tune hyperparameter search instead of normal training')
+    parser.add_argument('--tune-iterations', type=int, default=50,
+                       help='Number of hyperparameter combinations to try during tuning')
 
     args = parser.parse_args()
 
@@ -619,6 +709,8 @@ Examples:
         wandb_run_id=args.wandb_run_id,
         no_wandb=args.no_wandb,
         task=args.task,
+        tune=args.tune,
+        tune_iterations=args.tune_iterations,
     )
 
 
