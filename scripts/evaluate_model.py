@@ -1,18 +1,58 @@
-# scripts to run
-
-# Opening Environment   - .\defect_env_gpu311\Scripts\activate
-
-# Directing to scripts - cd scripts
-
-# Evaluating model - python evaluate_model.py --model runs/detect/my_first_wandb_run/weights/best.pt --data config/dataset.yaml --device 0
-
-
-
 """
-Model Evaluation Report Script for Defect Detection
-Generates a comprehensive evaluation report: confusion matrix, per-class metrics,
-mAP, confidence histograms, inference speed benchmarks, and saves everything
-to a timestamped report directory.
+=============================================================
+  evaluate_model.py  --  Defect detection pipeline script
+=============================================================
+HOW TO USE
+----------
+python evaluate_model.py [-h] --model MODEL [--data DATA]
+
+Examples:
+# Evaluate best model on test set
+  python evaluate_model.py --model models/best.pt
+
+  # Evaluate on validation set with custom threshold
+  python evaluate_model.py --model runs/detect/models/weights/best.pt --split val --conf 0.4
+
+  # CPU-only evaluation with custom output
+  python evaluate_model.py --model models/best.pt --device cpu --output logs/my_eval
+
+  # Quick benchmark only (fewer iterations)
+  python evaluate_model.py --model models/best.pt --benchmark-iters 50
+
+FLAGS
+-----
+-h, --help            show this help message and exit
+    --model MODEL         Path to trained YOLO model (.pt file)
+    --data DATA           Path to dataset.yaml (default: config/dataset.yaml)
+    --split {test,val,train}
+    Dataset split to evaluate (default: test)
+    --imgsz IMGSZ         Input image size (default: 1024)
+    --batch BATCH         Batch size (default: 16)
+    --conf CONF           Confidence threshold (default: 0.5)
+    --iou IOU             IoU threshold for NMS (default: 0.45)
+    --device DEVICE       Device â€” GPU id or "cpu" (default: 0)
+    --output OUTPUT       Output directory (default: auto-generated with
+    timestamp)
+    --benchmark-iters BENCHMARK_ITERS
+    Number of iterations for speed benchmark (default:
+    100)
+    Examples:
+    # Evaluate best model on test set
+    python evaluate_model.py --model models/best.pt
+    # Evaluate on validation set with custom threshold
+    python evaluate_model.py --model runs/detect/models/weights/best.pt --split val --conf 0.4
+    # CPU-only evaluation with custom output
+    python evaluate_model.py --model models/best.pt --device cpu --output logs/my_eval
+    # Quick benchmark only (fewer iterations)
+    python evaluate_model.py --model models/best.pt --benchmark-iters 50
+
+OLD EXAMPLES / SETUP
+--------------------
+# scripts to run
+# Opening Environment   - .\defect_env_gpu311\Scripts\activate
+# Directing to scripts - cd scripts
+# Evaluating model - python evaluate_model.py --model runs/detect/my_first_wandb_run/weights/best.pt --data config/dataset.yaml --device 0
+=============================================================
 """
 
 import os
@@ -31,11 +71,18 @@ except ImportError:
     TORCH_AVAILABLE = False
 
 try:
-    from ultralytics import YOLO
+    from ultralytics import YOLO, RTDETR
     ULTRALYTICS_AVAILABLE = True
 except ImportError:
     ULTRALYTICS_AVAILABLE = False
     print("Error: ultralytics not installed. Run: pip install ultralytics")
+
+
+def _load_model(model_path: str):
+    """Auto-detect YOLO vs RT-DETR from filename and return the right model instance."""
+    if 'rtdetr' in str(model_path).lower():
+        return RTDETR(model_path)
+    return YOLO(model_path)
 
 try:
     import matplotlib
@@ -84,7 +131,7 @@ class ModelEvaluator:
 
         # Load model
         print(f"Loading model: {model_path}")
-        self.model = YOLO(model_path)
+        self.model = _load_model(model_path)
         self.class_names = self.model.names  # {0: 'Good', 1: 'Flat_line', 2: 'Unwash'}
 
         # Create output directory

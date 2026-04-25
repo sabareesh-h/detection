@@ -1,21 +1,42 @@
-# scripts to run
-
-# python export_model.py C:\Users\RohithSuryaCKM\Downloads\Projects\Image_detection\scripts\runs\segment\models\my_seg_run7\weights\best.pt --format engine --half --imgsz 1280
-
-
 """
-Model Export Utility
-Export trained YOLOv11 model to various formats for deployment
+=============================================================
+  export_model.py  --  Defect detection pipeline script
+=============================================================
+HOW TO USE
+----------
+python export_model.py [-h] [--format {onnx,engine,torchscript,openvino}]
+
+FLAGS
+-----
+-h, --help            show this help message and exit
+    --format {onnx,engine,torchscript,openvino}, -f {onnx,engine,torchscript,openvino}
+    Export format
+    --imgsz IMGSZ         Image size
+    --half                FP16 precision (TensorRT)
+    --benchmark           Benchmark after export
+
+OLD EXAMPLES / SETUP
+--------------------
+# scripts to run
+# python export_model.py C:\Users\RohithSuryaCKM\Downloads\Projects\Image_detection\scripts\runs\segment\models\my_seg_run7\weights\best.pt --format engine --half --imgsz 1280
+=============================================================
 """
 
 import os
 from pathlib import Path
 
 try:
-    from ultralytics import YOLO
+    from ultralytics import YOLO, RTDETR
     ULTRALYTICS_AVAILABLE = True
 except ImportError:
     ULTRALYTICS_AVAILABLE = False
+
+
+def _load_model(model_path: str):
+    """Auto-detect YOLO vs RT-DETR from filename and return the right model instance."""
+    if 'rtdetr' in str(model_path).lower():
+        return RTDETR(model_path)
+    return YOLO(model_path)
 
 
 def export_model(
@@ -44,7 +65,7 @@ def export_model(
         raise ImportError("ultralytics not installed")
     
     print(f"Loading model: {model_path}")
-    model = YOLO(model_path)
+    model = _load_model(model_path)
     
     print(f"Exporting to {format.upper()}...")
     
@@ -96,7 +117,7 @@ def benchmark_models(model_paths: list, imgsz: int = 640):
             print(f"Skipping (not found): {model_path}")
             continue
         
-        model = YOLO(model_path)
+        model = _load_model(model_path)
         
         # Warmup
         for _ in range(5):

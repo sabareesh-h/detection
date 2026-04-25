@@ -217,7 +217,7 @@ good_vs_rust_optimized:
 
   # Batch & image size — 1024px for high-detail defect detection
   batch_size: 2
-  img_size: 1024
+  img_size: 1280
   rect: True              # Rectangular training (massive speed boost for non-square images)
   nbs: 64                # Nominal Batch Size (simulates batch of 64 via accumulation)
   overlap_mask: True      # Segmentation optimization: improves mask accuracy and speed

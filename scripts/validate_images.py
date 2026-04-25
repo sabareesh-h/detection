@@ -1,17 +1,28 @@
-# scripts to run
-
-# Opening Environment   - .\defect_env_gpu311\Scripts\activate
-
-# Directing to scripts - cd scripts
-
-# Validating images - python validate_images.py
-
-
-
-
 """
-Image Quality Validation Script
-Validates captured images before adding to training dataset
+=============================================================
+  validate_images.py  --  Defect detection pipeline script
+=============================================================
+HOW TO USE
+----------
+python validate_images.py [-h] [--min-width MIN_WIDTH]
+
+FLAGS
+-----
+-h, --help            show this help message and exit
+    --min-width MIN_WIDTH
+    Minimum image width
+    --min-height MIN_HEIGHT
+    Minimum image height
+    --min-sharpness MIN_SHARPNESS
+    Minimum sharpness threshold
+
+OLD EXAMPLES / SETUP
+--------------------
+# scripts to run
+# Opening Environment   - .\defect_env_gpu311\Scripts\activate
+# Directing to scripts - cd scripts
+# Validating images - python validate_images.py
+=============================================================
 """
 
 import os

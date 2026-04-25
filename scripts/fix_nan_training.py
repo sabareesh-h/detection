@@ -1,9 +1,15 @@
 """
-Fix NaN Training Issues
-=======================
-Diagnoses and fixes two common causes of NaN loss in YOLO training:
-1. Empty/corrupt label files (0-byte .txt files)
-2. Mismatched class counts between dataset.yaml and actual training data
+=============================================================
+  fix_nan_training.py  --  Defect detection pipeline script
+=============================================================
+HOW TO USE
+----------
+python fix_nan_training.py
+
+FLAGS
+-----
+(No flags defined or --help not available)
+=============================================================
 """
 
 import os

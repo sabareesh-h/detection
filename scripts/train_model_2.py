@@ -1,0 +1,670 @@
+"""
+=============================================================
+  train_model.py  --  Defect detection pipeline script
+=============================================================
+HOW TO USE
+----------
+python train_model.py
+
+FLAGS
+-----
+(No flags defined or --help not available)
+python train_model.py --preset good_vs_rust_optimized --name my_run --task segment --no-wandb
+=============================================================
+"""
+
+import os
+import sys
+import yaml
+from pathlib import Path
+from datetime import datetime
+from typing import Optional
+
+# Force Weights & Biases to use the Local Server, overriding cloud config
+os.environ["WANDB_BASE_URL"] = "http://localhost:8081"
+os.environ["WANDB_API_KEY"] = "local-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"
+
+import torch
+
+# ============================================================
+# GPU TENSOR CORE OPTIMIZATIONS (Critical for Blackwell GPUs)
+# ============================================================
+# By default, PyTorch uses strict FP32 math which BYPASSES the GPU's
+# dedicated Tensor Cores entirely. These settings unlock them:
+#
+#   allow_tf32  → Uses TF32 precision for matmul/conv ops.
+#                 TF32 = same effective accuracy as FP32 for neural networks,
+#                 but runs on Tensor Cores = up to 8x faster on Blackwell.
+#   benchmark   → Runs a quick search on startup to find the single fastest
+#                 CUDA kernel for your specific GPU + input size combination.
+#                 One-time cost (~2 seconds), then faster every epoch after.
+#   matmul precision 'high' → Explicitly tells PyTorch to prefer speed over
+#                 strict numerical precision for matrix multiplications.
+# ============================================================
+torch.backends.cudnn.benchmark = True          # Auto-find fastest CUDA kernel
+torch.backends.cuda.matmul.allow_tf32 = True   # Use Tensor Cores for matmul
+torch.backends.cudnn.allow_tf32 = True         # Use Tensor Cores for convolutions
+torch.set_float32_matmul_precision('high')     # Prefer speed over strict FP32
+
+# Project root = parent of 'scripts/' directory
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_HYPERPARAMS = str(PROJECT_ROOT / "config" / "hyperparams.yaml")
+DEFAULT_DATASET_YAML = str(PROJECT_ROOT / "config" / "dataset.yaml")
+
+try:
+    from ultralytics import YOLO, RTDETR
+    ULTRALYTICS_AVAILABLE = True
+except ImportError:
+    ULTRALYTICS_AVAILABLE = False
+    print("Error: ultralytics not installed. Run: pip install ultralytics")
+
+
+def load_model(weights: str):
+    """
+    Dynamically load a YOLO or RT-DETR model based on the weights filename.
+
+    Rules:
+      - If the weights string contains 'rtdetr', load using the RTDETR class.
+      - Otherwise, load using the YOLO class (covers all YOLOv8/v11 variants).
+
+    This allows seamless switching between architectures without changing any
+    other part of the training/inference pipeline.
+
+    Examples:
+      load_model('yolo26m.pt')        -> YOLO('yolo26m.pt')
+      load_model('rtdetr-l.pt')       -> RTDETR('rtdetr-l.pt')
+      load_model('rtdetr-x.pt')       -> RTDETR('rtdetr-x.pt')
+    """
+    if 'rtdetr' in str(weights).lower():
+        print(f"[Model] Detected RT-DETR weights — loading with RTDETR class: {weights}")
+        return RTDETR(weights)
+    else:
+        print(f"[Model] Loading with YOLO class: {weights}")
+        return YOLO(weights)
+
+
+def _add_gradient_clipping(model, max_norm=10.0):
+    """
+    Register NaN guard + gradient clipping via on_train_start callback.
+
+    Why on_train_start (not before model.train()):
+      Ultralytics moves the model to GPU inside model.train(), which
+      creates NEW tensor objects for the parameters. Hooks registered
+      BEFORE that move are attached to the old CPU tensors and silently
+      do nothing. Registering inside on_train_start (which fires AFTER
+      the move) ensures the hooks are on the live GPU parameters.
+
+    What the hook does per-gradient:
+      1. nan_to_num  → replaces NaN / ±Inf with 0.0 / ±max_norm
+      2. clamp       → hard-clips the value to [-max_norm, +max_norm]
+    This stops any single bad batch from corrupting model weights.
+    """
+    def _register_hooks(trainer):
+        hooks = []
+        for p in trainer.model.parameters():
+            if p.requires_grad:
+                def _safe_clip(grad, mx=max_norm):
+                    g = torch.nan_to_num(grad, nan=0.0,
+                                         posinf=mx, neginf=-mx)
+                    return torch.clamp(g, -mx, mx)
+                hooks.append(p.register_hook(_safe_clip))
+        # Store on trainer so Python's GC doesn't remove the hooks
+        trainer._grad_clip_hooks = hooks
+        print(f"[grad_clip] NaN guard + clipping active on "
+              f"{len(hooks)} params (max_norm={max_norm})")
+
+    model.add_callback('on_train_start', _register_hooks)
+    print(f"[grad_clip] Gradient clipping callback registered (max_norm={max_norm})")
+
+
+def _add_overfitting_callbacks(model):
+    """
+    Register a custom per-epoch wandb callback that logs the overfitting gap
+    (val_loss - train_loss) for box and cls losses.
+
+    A gap below 0.05 → healthy.  Growing above 0.10 → overfitting.
+    """
+    try:
+        import wandb
+    except ImportError:
+        return  # wandb not installed — skip silently
+
+    def _log_gap(trainer):
+        """Called at the end of every fit epoch by ultralytics."""
+        if not wandb.run:
+            return
+
+        m = getattr(trainer, 'metrics', {}) or {}
+
+        # Val losses come from the validator (always present after epoch 1)
+        val_box = m.get('val/box_loss')
+        val_cls = m.get('val/cls_loss')
+
+        # Train losses — ultralytics stores them in trainer.tloss (Tensor[3])
+        # Order: [box_loss, cls_loss, dfl_loss]
+        train_box = train_cls = None
+        tloss = getattr(trainer, 'tloss', None)
+        if tloss is not None:
+            try:
+                import torch
+                t = tloss.detach().cpu() if isinstance(tloss, torch.Tensor) else None
+                if t is not None and t.numel() >= 2:
+                    train_box = float(t[0])
+                    train_cls = float(t[1])
+            except Exception:
+                pass
+
+        log_dict = {}
+        if val_box is not None and train_box is not None:
+            log_dict['overfitting/box_gap']  = round(float(val_box) - train_box, 4)
+        if val_cls is not None and train_cls is not None:
+            log_dict['overfitting/cls_gap']  = round(float(val_cls) - train_cls, 4)
+        if log_dict:
+            log_dict['overfitting/epoch'] = trainer.epoch
+            wandb.log(log_dict)
+
+    def _log_all_metrics(trainer):
+        """Explicitly log all training metrics each epoch so WandB charts are populated."""
+        if not wandb.run:
+            return
+
+        m = getattr(trainer, 'metrics', {}) or {}
+        epoch = trainer.epoch
+        log_dict = {'epoch': epoch}
+
+        # --- Training losses (from tloss tensor: [box, cls, dfl]) ---
+        tloss = getattr(trainer, 'tloss', None)
+        if tloss is not None:
+            try:
+                t = tloss.detach().cpu() if hasattr(tloss, 'detach') else None
+                if t is not None and t.numel() >= 3:
+                    log_dict['train/box_loss'] = round(float(t[0]), 5)
+                    log_dict['train/cls_loss'] = round(float(t[1]), 5)
+                    log_dict['train/dfl_loss'] = round(float(t[2]), 5)
+            except Exception:
+                pass
+
+        # --- Validation losses ---
+        for key in ('val/box_loss', 'val/cls_loss', 'val/dfl_loss'):
+            if m.get(key) is not None:
+                log_dict[key] = round(float(m[key]), 5)
+
+        # --- Performance metrics ---
+        for key in ('metrics/mAP50(B)', 'metrics/mAP50-95(B)',
+                    'metrics/precision(B)', 'metrics/recall(B)'):
+            if m.get(key) is not None:
+                clean_key = key.replace('(B)', '')
+                log_dict[clean_key] = round(float(m[key]), 5)
+
+        # --- Learning rate ---
+        optimizer = getattr(trainer, 'optimizer', None)
+        if optimizer and optimizer.param_groups:
+            log_dict['lr/pg0'] = optimizer.param_groups[0]['lr']
+            if len(optimizer.param_groups) > 1:
+                log_dict['lr/pg1'] = optimizer.param_groups[1]['lr']
+
+        if len(log_dict) > 1:  # more than just 'epoch'
+            wandb.log(log_dict)
+
+    model.add_callback('on_fit_epoch_end', _log_gap)
+    model.add_callback('on_fit_epoch_end', _log_all_metrics)
+    print("[wandb] Callbacks registered: overfitting gaps + full metrics (loss, mAP, LR)")
+
+
+def check_environment():
+    """Check and print environment information"""
+    print("="*60)
+    print("ENVIRONMENT CHECK")
+    print("="*60)
+    
+    # Python version
+    print(f"Python: {sys.version}")
+    
+    # PyTorch and CUDA
+    print(f"PyTorch: {torch.__version__}")
+    print(f"CUDA Available: {torch.cuda.is_available()}")
+    
+    if torch.cuda.is_available():
+        print(f"CUDA Version: {torch.version.cuda}")
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+    else:
+        print("WARNING: No GPU detected! Training will be very slow on CPU.")
+    
+    # Ultralytics
+    if ULTRALYTICS_AVAILABLE:
+        from ultralytics import __version__ as ultra_version
+        print(f"Ultralytics: {ultra_version}")
+    
+    print("="*60 + "\n")
+    
+    return torch.cuda.is_available()
+
+
+def load_hyperparams(yaml_path: str, preset: str = "good_vs_rust_optimized") -> dict:
+    """
+    Load a hyperparameter preset from hyperparams.yaml.
+
+    Args:
+        yaml_path: Path to hyperparams.yaml
+        preset: Preset name (baseline, small_dataset, fine_detail, fast_training)
+
+    Returns:
+        Dictionary of hyperparameter key-value pairs
+    """
+    yaml_path = Path(yaml_path)
+    if not yaml_path.exists():
+        print(f"ERROR: Hyperparams file not found: {yaml_path}")
+        sys.exit(1)
+
+    with open(yaml_path, 'r') as f:
+        all_presets = yaml.safe_load(f)
+
+    if preset not in all_presets:
+        available = [k for k in all_presets if isinstance(all_presets[k], dict)]
+        print(f"ERROR: Preset '{preset}' not found. Available: {available}")
+        sys.exit(1)
+
+    params = all_presets[preset]
+    print(f"Loaded hyperparameter preset: '{preset}'")
+    if 'description' in params:
+        print(f"  → {params['description']}")
+    return params
+
+
+def train_yolo_model(
+    data_config: str = "config/dataset.yaml",
+    hyperparams: dict = None,
+    device = 0,
+    project: str = "models",
+    name: str = None,
+    resume: bool = False,
+    weights: str = "yolo26m.pt",
+    wandb_run_id: Optional[str] = None,
+    no_wandb: bool = False,
+    task: str = "detect",
+):
+    """
+    Train YOLO model on defect detection dataset.
+
+    All training / augmentation / optimizer settings are read from the
+    hyperparams dict (loaded from config/hyperparams.yaml).  CLI arguments
+    can override individual values.
+
+    Args:
+        data_config: Path to dataset.yaml configuration
+        hyperparams: Dict of hyperparameters (from load_hyperparams)
+        device: GPU device ID (0, 1, etc.) or 'cpu'
+        project: Output project directory
+        name: Experiment name (auto-generated if None)
+        resume: Resume training from last checkpoint
+        weights: Pretrained weights to start from
+
+    Returns:
+        Training results
+    """
+    if not ULTRALYTICS_AVAILABLE:
+        raise ImportError("ultralytics package not installed")
+
+    if hyperparams is None:
+        hyperparams = {}
+
+    # ---- Read values from hyperparams (with sensible fallbacks) ----
+    epochs        = hyperparams.get('epochs', 100)
+    patience      = hyperparams.get('patience', 20)
+    batch_size    = hyperparams.get('batch_size', 4)
+    img_size      = hyperparams.get('img_size', 1024)
+    optimizer     = hyperparams.get('optimizer', 'auto')
+    lr0           = hyperparams.get('lr0', 0.01)
+    lrf           = hyperparams.get('lrf', 0.01)
+    momentum      = hyperparams.get('momentum', 0.937)
+    weight_decay  = hyperparams.get('weight_decay', 0.0005)
+    warmup_epochs = hyperparams.get('warmup_epochs', 3.0)
+    warmup_momentum = hyperparams.get('warmup_momentum', 0.8)
+    warmup_bias_lr  = hyperparams.get('warmup_bias_lr', 0.1)
+    workers       = hyperparams.get('workers', 8)
+    amp           = hyperparams.get('amp', True)
+
+    # Loss weights
+    cls_weight    = hyperparams.get('cls', 0.5)
+    box_weight    = hyperparams.get('box', 7.5)
+    dfl_weight    = hyperparams.get('dfl', 1.5)
+
+    # Transfer learning
+    freeze        = hyperparams.get('freeze', None)
+    cos_lr        = hyperparams.get('cos_lr', True)
+
+    # Mosaic control
+    close_mosaic  = hyperparams.get('close_mosaic', 10)
+
+    # Augmentation
+    degrees      = hyperparams.get('degrees', 0.0)
+    translate    = hyperparams.get('translate', 0.1)
+    scale        = hyperparams.get('scale', 0.5)
+    shear        = hyperparams.get('shear', 0.0)
+    perspective  = hyperparams.get('perspective', 0.0)
+    flipud       = hyperparams.get('flipud', 0.0)
+    fliplr       = hyperparams.get('fliplr', 0.5)
+    mosaic       = hyperparams.get('mosaic', 1.0)
+    mixup        = hyperparams.get('mixup', 0.0)
+    copy_paste   = hyperparams.get('copy_paste', 0.0)
+    hsv_h        = hyperparams.get('hsv_h', 0.015)
+    hsv_s        = hyperparams.get('hsv_s', 0.2)
+    hsv_v        = hyperparams.get('hsv_v', 0.4)
+    # [NaN FIX] Explicitly control erasing and auto_augment so preset values are honoured
+    erasing      = hyperparams.get('erasing', 0.4)     # default matches Ultralytics default
+    auto_augment = hyperparams.get('auto_augment', 'randaugment')  # default matches Ultralytics default
+
+    # Generate experiment name if not provided
+    if name is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        name = f"defect_yolo26m_{timestamp}"
+
+    print(f"\nStarting training: {name}")
+    print(f"Task:           {task.upper()} ({'bounding box' if task == 'detect' else 'polygon mask'})")
+    print(f"Weights:        {weights}")
+    print(f"Dataset config: {data_config}")
+    print(f"Epochs: {epochs}, Batch size: {batch_size}, Image size: {img_size}")
+    print(f"Optimizer: {optimizer}, LR0: {lr0}, Weight Decay: {weight_decay}")
+    print(f"Loss weights: cls={cls_weight}, box={box_weight}, dfl={dfl_weight}")
+    print(f"Freeze: {freeze}, Close mosaic: {close_mosaic}")
+
+    # ---- Initialise WandB (must happen BEFORE model.train so Ultralytics picks it up) ----
+    if no_wandb:
+        # Disable wandb entirely via env var so Ultralytics integration also skips it
+        os.environ["WANDB_MODE"] = "disabled"
+        print("[wandb] Disabled (--no-wandb flag set)")
+    else:
+        try:
+            import wandb
+            if wandb_run_id:
+                # Resume a specific existing run
+                wandb.init(
+                    project="defect-detection",
+                    id=wandb_run_id,
+                    resume="allow",
+                )
+                print(f"[wandb] Resuming run: {wandb_run_id}")
+            else:
+                wandb.init(
+                    project="defect-detection",
+                    name=name,
+                    resume="allow",
+                )
+                print(f"[wandb] Started new run: {wandb.run.name}")
+        except ImportError:
+            print("[wandb] wandb not installed — skipping. Install with: pip install wandb")
+
+    # ---- RT-DETR guard: segmentation is not supported ----
+    is_rtdetr = 'rtdetr' in str(weights).lower()
+    if is_rtdetr and task == 'segment':
+        print("\n[ERROR] RT-DETR does not support segmentation (--task segment).")
+        print("        RT-DETR is a detection-only model.")
+        print("        Your segmentation labels will be auto-converted to bounding boxes.")
+        print("        Remove --task segment and re-run to train RT-DETR as a detector.")
+        sys.exit(1)
+
+    # Load pretrained model (auto-detects YOLO vs RT-DETR from filename)
+    model = load_model(weights)
+
+    # ---- Always register gradient clipping (regardless of wandb) ----
+    # This is the primary NaN defence: caps every gradient to ±10 and
+    # replaces any NaN/Inf gradient with 0, so a single bad batch cannot
+    # corrupt the model weights.
+    _add_gradient_clipping(model, max_norm=10.0)
+
+    # Register custom wandb overfitting-gap callback (only when wandb is active)
+    if not no_wandb:
+        _add_overfitting_callbacks(model)
+
+    # Training — every value comes from hyperparams.yaml
+    results = model.train(
+        # Data
+        data=data_config,
+
+        # Training duration
+        epochs=epochs,
+        patience=patience,
+
+        # Batch and image size
+        batch=batch_size,
+        imgsz=img_size,
+
+        # Hardware
+        device=device,
+        workers=workers,
+
+        # Optimization
+        optimizer=optimizer,
+        lr0=lr0,
+        lrf=lrf,
+        momentum=momentum,
+        weight_decay=weight_decay,
+        warmup_epochs=warmup_epochs,
+        warmup_momentum=warmup_momentum,
+        warmup_bias_lr=warmup_bias_lr,
+
+        # Augmentation
+        degrees=degrees,
+        translate=translate,
+        scale=scale,
+        shear=shear,
+        perspective=perspective,
+        flipud=flipud,
+        fliplr=fliplr,
+        mosaic=mosaic,
+        mixup=mixup,
+        copy_paste=copy_paste,
+        hsv_h=hsv_h,
+        hsv_s=hsv_s,
+        hsv_v=hsv_v,
+        erasing=erasing,           # [NaN FIX] From hyperparams — set to 0.0 in preset to prevent empty-crop NaN
+        auto_augment=auto_augment, # [NaN FIX] From hyperparams — disabled in preset to prevent extreme pixel values
+
+        # Loss weights
+        cls=cls_weight,
+        box=box_weight,
+        dfl=dfl_weight,
+
+        # Transfer learning
+        freeze=freeze,
+        cos_lr=cos_lr,
+
+        # Mosaic control
+        close_mosaic=close_mosaic,
+
+        # Output
+        project=project,
+        name=name,
+        exist_ok=False,
+        save=True,
+        save_period=-1,
+        plots=True,
+
+        # Validation
+        val=True,
+
+        # Advanced
+        amp=amp,
+        resume=resume,
+        verbose=True,
+    )
+
+    print("\n" + "="*60)
+    print("TRAINING COMPLETE")
+    print("="*60)
+    print(f"Best model saved to: {results.save_dir}/weights/best.pt")
+    print(f"Last model saved to: {results.save_dir}/weights/last.pt")
+    print(f"Training plots saved to: {results.save_dir}")
+    print("="*60)
+
+    return results
+
+
+def validate_model(
+    model_path: str,
+    data_config: str = "config/dataset.yaml",
+    img_size: int = 1024,
+    batch_size: int = 4,
+    device: int = 0
+):
+    """
+    Validate trained model and print metrics
+    
+    Args:
+        model_path: Path to trained model weights
+        data_config: Path to dataset.yaml
+        img_size: Image size for validation
+        batch_size: Batch size
+        device: GPU device
+        
+    Returns:
+        Validation metrics
+    """
+    model = YOLO(model_path)
+    
+    metrics = model.val(
+        data=data_config,
+        imgsz=img_size,
+        batch=batch_size,
+        device=device,
+        split='test',  # Validate on test set
+        plots=True,
+        save_json=True,
+    )
+    
+    print("\n" + "="*60)
+    print("VALIDATION RESULTS")
+    print("="*60)
+    print(f"mAP50:     {metrics.box.map50:.4f}")
+    print(f"mAP50-95:  {metrics.box.map:.4f}")
+    print(f"Precision: {metrics.box.mp:.4f}")
+    print(f"Recall:    {metrics.box.mr:.4f}")
+    
+    print("\nPer-class AP50:")
+    for i, class_name in enumerate(model.names.values()):
+        print(f"  {class_name}: {metrics.box.ap50[i]:.4f}")
+    
+    print("="*60)
+    
+    return metrics
+
+
+def main():
+    """Main training entry point"""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description='Train YOLO for defect detection (reads config/hyperparams.yaml)',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Train using the fine_detail preset (default)
+  python train_model.py
+
+  # Train using a different preset
+  python train_model.py --preset small_dataset
+
+  # Override a single value from the preset
+  python train_model.py --preset fine_detail --epochs 200
+
+  # Use a custom hyperparams file
+  python train_model.py --hyperparams path/to/my_hyperparams.yaml --preset baseline
+        """
+    )
+
+    # Hyperparams source
+    parser.add_argument('--hyperparams', default=DEFAULT_HYPERPARAMS,
+                       help='Path to hyperparams YAML file (default: config/hyperparams.yaml)')
+    parser.add_argument('--preset', default='good_vs_rust_optimized',
+                       help='Preset name inside hyperparams.yaml (default: good_vs_rust_optimized)')
+
+    # Overrides — these take priority over the YAML values
+    parser.add_argument('--data', default=DEFAULT_DATASET_YAML,
+                       help='Path to dataset.yaml')
+    parser.add_argument('--epochs', type=int, default=None,
+                       help='Override epochs from YAML')
+    parser.add_argument('--batch', type=float, default=None,
+                       help='Override batch_size (int for fixed, 0.0-1.0 for GPU memory fraction)')
+    parser.add_argument('--imgsz', type=int, default=None,
+                       help='Override image size')
+    parser.add_argument('--patience', type=int, default=None,
+                       help='Override early stopping patience')
+    parser.add_argument('--device', default='0',
+                       help='GPU device (0, 1, etc.) or cpu')
+    parser.add_argument('--weights', default=None,
+                       help='Override pretrained weights')
+    parser.add_argument('--name', default=None,
+                       help='Experiment name')
+    parser.add_argument('--resume', action='store_true',
+                       help='Resume training from last checkpoint')
+    parser.add_argument('--no-wandb', action='store_true',
+                       help='Disable Weights & Biases logging entirely')
+    parser.add_argument('--wandb-run-id', default=None,
+                       help='WandB run ID to resume (find it in the WandB dashboard URL or run list)')
+    parser.add_argument('--task', choices=['detect', 'segment'], default='detect',
+                       help='Training task: detect (bounding box) or segment (polygon mask). '
+                            'Auto-selects pretrained weights unless --weights is given.')
+    parser.add_argument('--validate-only', type=str, default=None,
+                       help='Only validate model at given path')
+
+    args = parser.parse_args()
+
+    # Check environment
+    has_gpu = check_environment()
+
+    # Parse device
+    if args.device.lower() == 'cpu':
+        device = 'cpu'
+    else:
+        device = int(args.device)
+
+    # Validate only mode
+    if args.validate_only:
+        validate_model(
+            model_path=args.validate_only,
+            data_config=args.data,
+            img_size=args.imgsz or 1024,
+            batch_size=int(args.batch) if args.batch and args.batch >= 1 else (args.batch or 4),
+            device=device
+        )
+        return
+
+    # ---- Load hyperparams from YAML ----
+    hp = load_hyperparams(args.hyperparams, args.preset)
+
+    # ---- Apply CLI overrides (only if explicitly provided) ----
+    if args.epochs is not None:
+        hp['epochs'] = args.epochs
+    if args.batch is not None:
+        hp['batch_size'] = int(args.batch) if args.batch >= 1 else args.batch
+    if args.imgsz is not None:
+        hp['img_size'] = args.imgsz
+    if args.patience is not None:
+        hp['patience'] = args.patience
+
+    # ---- Determine weights based on task ----
+    if args.weights:
+        weights = args.weights
+    elif args.task == 'segment':
+        weights = 'yolo26m-seg.pt'
+    else:
+        weights = 'yolo26m.pt'
+    print(f"[task={args.task}] Using weights: {weights}")
+
+    # ---- Train ----
+    train_yolo_model(
+        data_config=args.data,
+        hyperparams=hp,
+        device=device,
+        weights=weights,
+        name=args.name,
+        resume=args.resume,
+        wandb_run_id=args.wandb_run_id,
+        no_wandb=args.no_wandb,
+        task=args.task,
+    )
+
+
+if __name__ == "__main__":
+    main()

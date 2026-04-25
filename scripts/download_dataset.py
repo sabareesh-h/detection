@@ -1,3 +1,22 @@
+"""
+=============================================================
+  download_dataset.py  --  Defect detection pipeline script
+=============================================================
+HOW TO USE
+----------
+python download_dataset.py [-h] [--api-key API_KEY] [--workspace WORKSPACE]
+
+FLAGS
+-----
+-h, --help            show this help message and exit
+    --api-key API_KEY     Roboflow API Key
+    --workspace WORKSPACE
+    Roboflow Workspace
+    --project PROJECT     Roboflow Project
+    --version VERSION     Dataset Version
+=============================================================
+"""
+
 import argparse
 import os
 from roboflow import Roboflow

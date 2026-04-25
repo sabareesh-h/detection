@@ -1,25 +1,51 @@
+r"""
+=============================================================
+  defect_detector.py  --  Defect detection pipeline script
+=============================================================
+HOW TO USE
+----------
+python defect_detector.py [-h] --mode {live,image,video} [--model MODEL]
+
+Examples:
+python defect_detector.py --mode live --model path/to/best.pt
+  python defect_detector.py --mode image --model path/to/best.pt
+  python defect_detector.py --mode video --model path/to/best.pt --source video.mp4
+  python defect_detector.py --mode image --model path/to/best.pt --source photo.jpg
+
+FLAGS
+-----
+-h, --help            show this help message and exit
+    --mode {live,image,video}
+    Inference mode: live (camera feed), image (single
+    capture/file), video (video file)
+    --model MODEL         Path to trained model
+    --source SOURCE       Source file path â€” image file for "image" mode, video
+    file for "video" mode. If not provided in "image"
+    mode, captures from camera.
+    --config CONFIG       Path to system config
+    --conf CONF           Confidence threshold (default: 0.3)
+    --mock                Use mock camera for testing (no hardware needed)
+    Modes:
+    live    - Live camera feed with bounding boxes (press 'q' to quit, 's' to snapshot)
+    image   - Capture single image from camera, show detection result
+    video   - Process a video file (.mp4) with detection
+    Examples:
+    python defect_detector.py --mode live --model path/to/best.pt
+    python defect_detector.py --mode image --model path/to/best.pt
+    python defect_detector.py --mode video --model path/to/best.pt --source video.mp4
+    python defect_detector.py --mode image --model path/to/best.pt --source photo.jpg
+
+OLD EXAMPLES / SETUP
+--------------------
 # scripts to run
-
 # Opening Environment   - .\defect_env_gpu311\Scripts\activate
-
 # Directing to scripts - cd scripts
-
 # Detecting defects - python defect_detector.py --mode live --model runs/detect/my_first_wandb_run/weights/best.pt --config config/system_config.json --conf 0.03
-
 # Detecting Defect with greyscale - python defect_detector_overlay_greyscale_switch.py --mode live --model runs/detect/models/my_first_wandb_run6/weights/best.pt --display grey
-
-
 # Detecting live - python defect_detector.py --mode live --model runs/detect/models/my_first_wandb_run6/weights/best.pt 
-
 # Detecting Image - python defect_detector.py --mode image --model runs/detect/models/my_first_wandb_run6/weights/best.pt --source C:\Users\RohithSuryaCKM\Downloads\Projects\Image_detection\scripts\test_images\test_image_1.jpg
-
 # detecting video - python defect_detector.py --mode video --model runs/detect/models/my_first_wandb_run6/weights/best.pt --source C:\Users\RohithSuryaCKM\Downloads\Projects\Image_detection\scripts\test_images\test_video_1.mp4
-
-# streamlit run dashboard.py
-
-"""
-Defect Detection - Production Inference Pipeline
-Real-time defect detection using trained YOLOv11m model with Basler camera
+=============================================================
 """
 
 import os
@@ -34,13 +60,24 @@ import cv2
 import numpy as np
 
 try:
-    from ultralytics import YOLO
+    from ultralytics import YOLO, RTDETR
     ULTRALYTICS_AVAILABLE = True
 except ImportError:
     ULTRALYTICS_AVAILABLE = False
 
+from config_manager import load_system_config
+
+
+
+def _load_model(model_path: str):
+    """Auto-detect YOLO vs RT-DETR from filename and return the right model instance."""
+    if 'rtdetr' in str(model_path).lower():
+        print(f"[Model] Detected RT-DETR weights — loading with RTDETR class.")
+        return RTDETR(model_path)
+    return YOLO(model_path)
+
 # Import camera module
-from camera_capture import get_camera, BaslerCamera, MockCamera, convert_to_greyscale
+from camera_capture import get_camera, BaslerCamera, MockCamera, convert_to_greyscale, convert_to_greyscale_gpu
 
 
 class DefectDetector:
@@ -54,7 +91,7 @@ class DefectDetector:
         model_path: str,
         config_path: str = None,
         conf_threshold: float = 0.03,
-        iou_threshold: float = 0.2,
+        iou_threshold: float = 0.45,
         device: str = '0'
     ):
         """
@@ -64,7 +101,8 @@ class DefectDetector:
             model_path: Path to trained YOLOv11 model weights
             config_path: Path to system_config.json
             conf_threshold: Global minimum confidence (used as the default for all 4 zones)
-            iou_threshold: IoU threshold for NMS
+            iou_threshold: IoU threshold for NMS (higher = fewer overlapping duplicates suppressed;
+                           0.45 is the recommended default for segmentation models)
             device: GPU device ('0', '1', 'cpu')
         """
         if not ULTRALYTICS_AVAILABLE:
@@ -76,18 +114,18 @@ class DefectDetector:
         self.conf_threshold = 0.01
         # Per-zone confidence thresholds: [Top, Mid, Thread, Bottom]
         self.zone_conf = [conf_threshold] * 4
-        self.iou_threshold = iou_threshold
+        self.iou_threshold = iou_threshold  # Raised to 0.45 to suppress overlapping duplicate masks
         self.device = device
         
         # Load configuration
-        self.config = self._load_config(config_path)
+        self.config = load_system_config(config_path)
         
         # Min Area px size rejection limit (configurable from UI)
-        self.min_area_px = float(self.config.get("inspection", {}).get("min_defect_area_px", 150.0))
+        self.min_area_px = self.config.inspection.min_defect_area_px
         
         # Load model
         print(f"Loading model: {model_path}")
-        self.model = YOLO(model_path)
+        self.model = _load_model(model_path)
         self.class_names = self.model.names
 
         # Auto-detect whether this is a detection or segmentation model
@@ -99,27 +137,7 @@ class DefectDetector:
 
         print(f"Detector initialized. Classes: {list(self.class_names.values())}")
     
-    def _load_config(self, config_path: str) -> dict:
-        """Load configuration from JSON file"""
-        default_config = {
-            "model": {
-                "confidence_threshold": 0.05,
-                "iou_threshold": 0.20,
-                "image_size": 640
-            },
-            "inspection": {
-                "save_images": True,
-                "save_path": "logs/inspections",
-                "log_to_database": True,
-                "database_path": "logs/inspections.db"
-            }
-        }
-        
-        if config_path and os.path.exists(config_path):
-            with open(config_path, 'r') as f:
-                return json.load(f)
-        
-        return default_config
+
     
     def _warmup(self, iterations: int = 3):
         """Warmup model with dummy inference"""
@@ -128,7 +146,137 @@ class DefectDetector:
         for _ in range(iterations):
             self.model(dummy, verbose=False)
         print("Warmup complete")
-    
+
+    # ──────────────────────────────────────────────────────────────
+    #  Post-processing helpers
+    # ──────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _mask_iou(poly_a: list, poly_b: list, img_shape: tuple) -> float:
+        """
+        Compute pixel-level IoU between two mask polygons.
+        Optimized to only create masks within their bounding box union.
+        """
+        pts_a = np.array(poly_a, dtype=np.int32)
+        pts_b = np.array(poly_b, dtype=np.int32)
+        
+        # Bounding boxes
+        xa_min, ya_min = pts_a.min(axis=0)
+        xa_max, ya_max = pts_a.max(axis=0)
+        xb_min, yb_min = pts_b.min(axis=0)
+        xb_max, yb_max = pts_b.max(axis=0)
+        
+        # Check bbox intersection
+        inter_xmin = max(xa_min, xb_min)
+        inter_ymin = max(ya_min, yb_min)
+        inter_xmax = min(xa_max, xb_max)
+        inter_ymax = min(ya_max, yb_max)
+        
+        if inter_xmax <= inter_xmin or inter_ymax <= inter_ymin:
+            return 0.0
+            
+        # Optimization: use bounding box of union
+        w_roi = max(xa_max, xb_max) - min(xa_min, xb_min) + 1
+        h_roi = max(ya_max, yb_max) - min(ya_min, yb_min) + 1
+        x_min = min(xa_min, xb_min)
+        y_min = min(ya_min, yb_min)
+        
+        mask_a = np.zeros((h_roi, w_roi), dtype=np.uint8)
+        mask_b = np.zeros((h_roi, w_roi), dtype=np.uint8)
+        
+        pts_a_shifted = pts_a - [x_min, y_min]
+        pts_b_shifted = pts_b - [x_min, y_min]
+        
+        cv2.fillPoly(mask_a, [pts_a_shifted], 1)
+        cv2.fillPoly(mask_b, [pts_b_shifted], 1)
+        
+        intersection = np.logical_and(mask_a, mask_b).sum()
+        if intersection == 0:
+            return 0.0
+        union = np.logical_or(mask_a, mask_b).sum()
+        return float(intersection) / float(union) if union > 0 else 0.0
+
+    def _deduplicate_by_mask_iou(
+        self, defects: list, img_shape: tuple, iou_thresh: float = 0.35
+    ) -> list:
+        """
+        Second-pass NMS using actual mask pixels instead of bounding boxes.
+        Suppresses lower-confidence detections whose mask overlaps a
+        higher-confidence one by more than `iou_thresh`.
+        Defects must be sorted by confidence (highest first) on entry.
+        """
+        suppressed: set = set()
+        for i, d_i in enumerate(defects):
+            if i in suppressed:
+                continue
+            poly_i = d_i.get('mask_polygon')
+            if not poly_i or len(poly_i) < 3:
+                continue
+            for j in range(i + 1, len(defects)):
+                if j in suppressed:
+                    continue
+                poly_j = defects[j].get('mask_polygon')
+                if not poly_j or len(poly_j) < 3:
+                    continue
+                if self._mask_iou(poly_i, poly_j, img_shape) > iou_thresh:
+                    suppressed.add(j)
+        return [d for idx, d in enumerate(defects) if idx not in suppressed]
+
+    @staticmethod
+    def _cluster_defects(defects: list, distance_thresh: float = 100.0) -> list:
+        """
+        Merge detections whose mask centroids are within `distance_thresh`
+        pixels of each other — handles cases where one long scratch is
+        detected as two separate fragments with no pixel overlap.
+        The highest-confidence detection in each cluster is kept as the
+        representative; its bounding box is expanded to cover all members.
+        """
+        if not defects:
+            return defects
+
+        def _centroid(d):
+            poly = d.get('mask_polygon')
+            if poly and len(poly) >= 3:
+                pts = np.array(poly)
+                return float(np.mean(pts[:, 0])), float(np.mean(pts[:, 1]))
+            x1, y1, x2, y2 = d['bbox']
+            return (x1 + x2) / 2.0, (y1 + y2) / 2.0
+
+        centroids = [_centroid(d) for d in defects]
+        visited   = [False] * len(defects)
+        merged    = []
+
+        for i in range(len(defects)):
+            if visited[i]:
+                continue
+            cluster_ids = [i]
+            visited[i]  = True
+            for j in range(i + 1, len(defects)):
+                if visited[j]:
+                    continue
+                dx = centroids[i][0] - centroids[j][0]
+                dy = centroids[i][1] - centroids[j][1]
+                if (dx * dx + dy * dy) ** 0.5 < distance_thresh:
+                    cluster_ids.append(j)
+                    visited[j] = True
+
+            members = [defects[k] for k in cluster_ids]
+            best    = max(members, key=lambda d: d['confidence'])
+
+            if len(members) > 1:
+                best = dict(best)  # copy so we don't mutate original
+                best['bbox'] = [
+                    min(d['bbox'][0] for d in members),
+                    min(d['bbox'][1] for d in members),
+                    max(d['bbox'][2] for d in members),
+                    max(d['bbox'][3] for d in members),
+                ]
+                best['merged_count'] = len(members)
+
+            merged.append(best)
+
+        return merged
+
     def detect(self, image: np.ndarray) -> Dict:
         """
         Run defect detection on image.
@@ -145,7 +293,7 @@ class DefectDetector:
         start_time = time.time()
         
         # ── ROI Cropping ──
-        roi = self.config.get("inspection", {}).get("roi", None)
+        roi = self.config.inspection.roi
         h, w = image.shape[:2]
         offset_x, offset_y = 0, 0
         crop_image = image
@@ -159,12 +307,15 @@ class DefectDetector:
                 offset_x, offset_y = xmin, ymin
                 
         # ── Greyscale pre-processing ──
-        grey_image = convert_to_greyscale(crop_image)
+        if self.config.model.gpu_preprocessing:
+            grey_image = convert_to_greyscale_gpu(crop_image, device=self.device)
+        else:
+            grey_image = convert_to_greyscale(crop_image)
         
         # ── Idea 1: Dynamic Horizontal Band Focus ──
         masked_image = grey_image.copy()
         core_box = None
-        dynamic_margin = self.config.get("inspection", {}).get("dynamic_margin", 0.15)
+        dynamic_margin = self.config.inspection.dynamic_margin
         
         if dynamic_margin > 0:
             blurred = cv2.GaussianBlur(grey_image, (7, 7), 0)
@@ -201,7 +352,8 @@ class DefectDetector:
         results = self.model(
             masked_image,
             conf=self.conf_threshold,
-            iou=self.iou_threshold,
+            iou=self.iou_threshold,       # NMS IoU threshold (0.45 = suppress >45% overlapping duplicates)
+            agnostic_nms=False,            # Keep class-aware NMS (all defects are same class anyway)
             device=self.device,
             verbose=False
         )
@@ -241,7 +393,8 @@ class DefectDetector:
                         
                         contour = np.array(xy, dtype=np.float32).reshape((-1, 1, 2))
                         area_px = cv2.contourArea(contour)
-                    except Exception:
+                    except Exception as e:
+                        print(f"Error calculating contour area: {e}")
                         area_px = float((x2 - x1) * (y2 - y1))
                 else:
                     area_px = float((x2 - x1) * (y2 - y1))
@@ -275,7 +428,20 @@ class DefectDetector:
 
         # Sort by confidence (highest first)
         defects.sort(key=lambda x: x['confidence'], reverse=True)
-        
+
+        # ── Pass 1: pixel-level mask IoU deduplication ──
+        # Catches overlapping masks that bounding-box NMS misses.
+        defects = self._deduplicate_by_mask_iou(
+            defects, grey_image.shape, iou_thresh=0.35
+        )
+
+        # ── Pass 2: centroid-distance clustering ──
+        # Merges fragments of the same physical scratch that don't overlap.
+        defects = self._cluster_defects(defects, distance_thresh=100.0)
+
+        # Re-sort after merging (cluster representative keeps best conf)
+        defects.sort(key=lambda x: x['confidence'], reverse=True)
+
         return {
             'is_defective': len(defects) > 0,
             'defect_count': len(defects),
@@ -338,6 +504,10 @@ class DefectDetector:
                             area_val = cv2.getTrackbarPos("Min Area px", settings_name)
                             if area_val is not None:
                                 self.min_area_px = float(area_val)
+                            
+                            gpu_val = cv2.getTrackbarPos("GPU Preprocess", settings_name)
+                            if gpu_val is not None:
+                                self.config.model.gpu_preprocessing = bool(gpu_val)
                     except cv2.error:
                         show_settings = False
                 
@@ -360,23 +530,28 @@ class DefectDetector:
                         for zi, zname in enumerate(self.ZONE_NAMES):
                             cv2.createTrackbar(f"Conf {zname} %", settings_name, int(self.zone_conf[zi] * 100), 100, lambda x: None)
                         cv2.createTrackbar("Min Area px", settings_name, int(self.min_area_px), 5000, lambda x: None)
+                        cv2.createTrackbar("GPU Preprocess", settings_name, int(self.config.model.gpu_preprocessing), 1, lambda x: None)
                     else:
                         try: cv2.destroyWindow(settings_name)
-                        except: pass
+                        except Exception as e: print(f"Error: {e}")
         finally:
             cap.release()
             if out is not None:
                 out.release()
             cv2.destroyAllWindows()
     
-    def draw_results(self, image: np.ndarray, result: Dict, hover_pos: Optional[Tuple[int, int]] = None) -> np.ndarray:
+    def draw_results(self, image: np.ndarray, result: Dict,
+                     hover_pos: Optional[Tuple[int, int]] = None,
+                     always_show_labels: bool = False) -> np.ndarray:
         """
         Draw detection results on image
-        
+
         Args:
             image: Original image
             result: Detection result dict
-            hover_pos: (x, y) coordinates of the mouse for hover tooltips
+            hover_pos: (x, y) mouse coordinates for hover tooltips (cv2 live mode)
+            always_show_labels: If True, always draw confidence labels at mask
+                                centroids regardless of hover (used by web server)
             
         Returns:
             Annotated image
@@ -398,7 +573,7 @@ class DefectDetector:
         default_color = (0, 255, 255)
         
         # Draw ROI boundary if active
-        roi = self.config.get("inspection", {}).get("roi", None)
+        roi = self.config.inspection.roi
         if roi and len(roi) == 4:
             ymin, ymax, xmin, xmax = roi
             ymin, ymax = max(0, ymin), min(h, ymax)
@@ -430,8 +605,18 @@ class DefectDetector:
                 # ── Detection model: draw plain bounding box ──
                 cv2.rectangle(annotated, (x1, y1), (x2, y2), color, box_thickness)
 
-            # Draw label only if hovered
-            if hover_pos is not None:
+            # Draw label: always (web mode) or on hover (cv2 live mode)
+            show_label = False
+            lx, ly = x1, y1   # default label anchor
+
+            if always_show_labels:
+                # Anchor label at mask centroid
+                if mask_poly and len(mask_poly) >= 3:
+                    pts_c = np.array(mask_poly)
+                    lx = int(np.mean(pts_c[:, 0]))
+                    ly = int(np.mean(pts_c[:, 1]))
+                show_label = True
+            elif hover_pos is not None:
                 hx, hy = hover_pos
                 is_hovered = False
                 if mask_poly and len(mask_poly) >= 3:
@@ -440,14 +625,50 @@ class DefectDetector:
                 else:
                     if x1 <= hx <= x2 and y1 <= hy <= y2:
                         is_hovered = True
-                        
                 if is_hovered:
-                    label = f"{defect['class']}: {defect['confidence']:.1%}"
-                    label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
-                    cv2.rectangle(annotated, (hx, hy - label_size[1] - label_pad), (hx + label_size[0] + 4, hy), color, -1)
-                    cv2.putText(annotated, label, (hx + 2, hy - int(label_pad / 2)),
-                               cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), thickness)
-        
+                    lx, ly = hx, hy
+                    show_label = True
+
+            if show_label:
+                label = f"{defect['class'].upper()}: {defect['confidence']:.1%}"
+                label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
+                # keep label inside frame
+                lx = min(lx, w - label_size[0] - 6)
+                ly = max(ly, label_size[1] + label_pad)
+                cv2.rectangle(annotated,
+                              (lx, ly - label_size[1] - label_pad),
+                              (lx + label_size[0] + 4, ly),
+                              color, -1)
+                cv2.putText(annotated, label, (lx + 2, ly - int(label_pad / 2)),
+                            cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), thickness)
+
+        # ── Defect index badges (drawn on top of all masks) ── [DISABLED]
+        # To re-enable, remove the leading "# " from each line below.
+        # badge_r   = max(11, int(13 * scale))
+        # badge_fs  = 0.38 * scale
+        # badge_thk = max(1, int(2 * scale))
+        # for rank, defect in enumerate(result.get('defects', []), start=1):
+        #     mask_poly = defect.get('mask_polygon')
+        #     if mask_poly and len(mask_poly) >= 3:
+        #         pts_b = np.array(mask_poly)
+        #         cx_b  = int(np.mean(pts_b[:, 0]))
+        #         cy_b  = int(np.mean(pts_b[:, 1]))
+        #     else:
+        #         bx1, by1, bx2, by2 = [int(x) for x in defect['bbox']]
+        #         cx_b = (bx1 + bx2) // 2
+        #         cy_b = (by1 + by2) // 2
+        #     b_color = colors.get(defect['class'].lower(), default_color)
+        #     cv2.circle(annotated, (cx_b, cy_b), badge_r, b_color, -1)
+        #     cv2.circle(annotated, (cx_b, cy_b), badge_r, (255, 255, 255),
+        #                max(1, int(scale)))
+        #     num_str = str(rank)
+        #     (nw, nh), _ = cv2.getTextSize(
+        #         num_str, cv2.FONT_HERSHEY_SIMPLEX, badge_fs, badge_thk)
+        #     cv2.putText(annotated, num_str,
+        #                 (cx_b - nw // 2, cy_b + nh // 2),
+        #                 cv2.FONT_HERSHEY_SIMPLEX, badge_fs,
+        #                 (0, 0, 0), badge_thk)
+
         # ── Zone Analysis: divide part into 4 vertical zones ──
         num_zones = 4
         zone_width = w // num_zones
@@ -787,6 +1008,10 @@ class ProductionInspectionSystem:
                             area_val = cv2.getTrackbarPos("Min Area px", settings_name)
                             if area_val is not None:
                                 self.detector.min_area_px = float(area_val)
+                            
+                            gpu_val = cv2.getTrackbarPos("GPU Preprocess", settings_name)
+                            if gpu_val is not None:
+                                self.detector.config.model.gpu_preprocessing = bool(gpu_val)
                     except cv2.error:
                         show_settings = False
 
@@ -804,8 +1029,11 @@ class ProductionInspectionSystem:
                 # Decide which frame to annotate for display
                 if show_grey:
                     # Convert to greyscale and back to BGR so coloured overlays still work
-                    from camera_capture import convert_to_greyscale
-                    grey_bgr = convert_to_greyscale(image)   # returns 3-ch BGR-grey
+                    from camera_capture import convert_to_greyscale, convert_to_greyscale_gpu
+                    if self.detector.config.model.gpu_preprocessing:
+                        grey_bgr = convert_to_greyscale_gpu(image, device=self.detector.device)
+                    else:
+                        grey_bgr = convert_to_greyscale(image)   # returns 3-ch BGR-grey
                     display_frame = grey_bgr
                 else:
                     display_frame = image
@@ -857,9 +1085,10 @@ class ProductionInspectionSystem:
                         for zi, zname in enumerate(self.detector.ZONE_NAMES):
                             cv2.createTrackbar(f"Conf {zname} %", settings_name, int(self.detector.zone_conf[zi] * 100), 100, lambda x: None)
                         cv2.createTrackbar("Min Area px", settings_name, int(self.detector.min_area_px), 5000, lambda x: None)
+                        cv2.createTrackbar("GPU Preprocess", settings_name, int(self.detector.config.model.gpu_preprocessing), 1, lambda x: None)
                     else:
                         try: cv2.destroyWindow(settings_name)
-                        except: pass
+                        except Exception as e: print(f"Error: {e}")
                 elif key == ord('s'):
                     # Save snapshot
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -1021,6 +1250,13 @@ Examples:
                                 if new_area != detector.min_area_px:
                                     detector.min_area_px = new_area
                                     zone_changed = True
+                            
+                            gpu_val = cv2.getTrackbarPos("GPU Preprocess", settings_name)
+                            if gpu_val is not None:
+                                new_gpu = bool(gpu_val)
+                                if new_gpu != detector.config.model.gpu_preprocessing:
+                                    detector.config.model.gpu_preprocessing = new_gpu
+                                    zone_changed = True
                     except cv2.error:
                         show_settings = False
                 if zone_changed:
@@ -1041,9 +1277,10 @@ Examples:
                         for zi, zname in enumerate(detector.ZONE_NAMES):
                             cv2.createTrackbar(f"Conf {zname} %", settings_name, int(detector.zone_conf[zi] * 100), 100, lambda x: None)
                         cv2.createTrackbar("Min Area px", settings_name, int(detector.min_area_px), 5000, lambda x: None)
+                        cv2.createTrackbar("GPU Preprocess", settings_name, int(detector.config.model.gpu_preprocessing), 1, lambda x: None)
                     else:
                         try: cv2.destroyWindow(settings_name)
-                        except: pass
+                        except Exception as e: print(f"Error: {e}")
                 elif key != 255:
                     break
             cv2.destroyAllWindows()
@@ -1116,6 +1353,13 @@ Examples:
                                 if new_area != system.detector.min_area_px:
                                     system.detector.min_area_px = new_area
                                     zone_changed = True
+                                    
+                            gpu_val = cv2.getTrackbarPos("GPU Preprocess", settings_name)
+                            if gpu_val is not None:
+                                new_gpu = bool(gpu_val)
+                                if new_gpu != system.detector.config.model.gpu_preprocessing:
+                                    system.detector.config.model.gpu_preprocessing = new_gpu
+                                    zone_changed = True
                     except cv2.error:
                         show_settings = False
                 if zone_changed:
@@ -1136,9 +1380,10 @@ Examples:
                         for zi, zname in enumerate(system.detector.ZONE_NAMES):
                             cv2.createTrackbar(f"Conf {zname} %", settings_name, int(system.detector.zone_conf[zi] * 100), 100, lambda x: None)
                         cv2.createTrackbar("Min Area px", settings_name, int(system.detector.min_area_px), 5000, lambda x: None)
+                        cv2.createTrackbar("GPU Preprocess", settings_name, int(system.detector.config.model.gpu_preprocessing), 1, lambda x: None)
                     else:
                         try: cv2.destroyWindow(settings_name)
-                        except: pass
+                        except Exception as e: print(f"Error: {e}")
                 elif key != 255:
                     if key == ord('s'):
                         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

@@ -1,13 +1,72 @@
 """
-Master Pipeline Script — Defect Detection System
-Chains all pipeline steps into a single command:
-  Data Preparation → Augmentation → Training → Evaluation → Export
+=============================================================
+  run_pipeline.py  --  Defect detection pipeline script
+=============================================================
+HOW TO USE
+----------
+python run_pipeline.py [-h] --mode {full,train-eval,eval-only,augment-only}
 
-Usage:
-  python scripts/run_pipeline.py --mode full          # Run everything
-  python scripts/run_pipeline.py --mode train-eval    # Train + Evaluate only
-  python scripts/run_pipeline.py --mode eval-only     # Evaluate existing model
-  python scripts/run_pipeline.py --mode augment-only  # Augment dataset only
+Examples:
+# Full pipeline with small_dataset preset (RECOMMENDED)
+  python scripts/run_pipeline.py --mode full --preset small_dataset
+
+  # Quick test to verify everything works
+  python scripts/run_pipeline.py --mode full --preset fast_training
+
+  # Train + evaluate with fine detail preset
+  python scripts/run_pipeline.py --mode train-eval --preset fine_detail
+
+  # Evaluate an existing model
+  python scripts/run_pipeline.py --mode eval-only --model models/best.pt
+
+  # Augment dataset with heavy augmentation (10x)
+  python scripts/run_pipeline.py --mode augment-only --multiplier 10 --aug-level heavy
+
+FLAGS
+-----
+-h, --help            show this help message and exit
+    --mode {full,train-eval,eval-only,augment-only}
+    Pipeline mode to run
+    --preset {baseline,small_dataset,fine_detail,fast_training}
+    Hyperparameter preset (default: small_dataset)
+    --data DATA           Path to dataset.yaml
+    --weights WEIGHTS     Pre-trained model weights (default: yolo26m.pt)
+    --model MODEL         Path to trained model (for eval-only mode)
+    --device DEVICE       Device â€” GPU id or "cpu"
+    --name NAME           Experiment name (auto-generated if not set)
+    --train-images TRAIN_IMAGES
+    Training images directory
+    --train-labels TRAIN_LABELS
+    Training labels directory
+    --multiplier MULTIPLIER
+    Augmentation multiplier (default: 5)
+    --aug-level {light,medium,heavy}
+    Augmentation intensity (default: medium)
+    --export              Export model after training
+    --export-format EXPORT_FORMAT
+    Export format: onnx, torchscript, etc.
+    Pipeline Modes:
+    full          Validate â†’ Augment â†’ Train â†’ Evaluate â†’ Compare â†’ Export
+    train-eval    Train â†’ Evaluate â†’ Compare (skip augmentation)
+    eval-only     Evaluate an existing model (requires --model)
+    augment-only  Augment training dataset only
+    Hyperparameter Presets (from config/hyperparams.yaml):
+    baseline       Default training config
+    small_dataset  Tuned for <200 images (recommended for your current dataset)
+    fine_detail    High-res training for small/subtle defects (imgsz=1280)
+    fast_training  Quick sanity check (20 epochs)
+    Examples:
+    # Full pipeline with small_dataset preset (RECOMMENDED)
+    python scripts/run_pipeline.py --mode full --preset small_dataset
+    # Quick test to verify everything works
+    python scripts/run_pipeline.py --mode full --preset fast_training
+    # Train + evaluate with fine detail preset
+    python scripts/run_pipeline.py --mode train-eval --preset fine_detail
+    # Evaluate an existing model
+    python scripts/run_pipeline.py --mode eval-only --model models/best.pt
+    # Augment dataset with heavy augmentation (10x)
+    python scripts/run_pipeline.py --mode augment-only --multiplier 10 --aug-level heavy
+=============================================================
 """
 
 import os
@@ -215,8 +274,8 @@ def step_export(model_path: str, fmt: str = "onnx") -> bool:
     print_step_header("6. EXPORT MODEL")
 
     try:
-        from ultralytics import YOLO
-        model = YOLO(model_path)
+        from ultralytics import YOLO, RTDETR
+        model = RTDETR(model_path) if 'rtdetr' in str(model_path).lower() else YOLO(model_path)
         model.export(format=fmt)
         print(f"Model exported to {fmt} format.")
         return True
@@ -398,7 +457,8 @@ Examples:
                         choices=['full', 'train-eval', 'eval-only', 'augment-only'],
                         help='Pipeline mode to run')
     parser.add_argument('--preset', default='small_dataset',
-                        choices=['baseline', 'small_dataset', 'fine_detail', 'fast_training'],
+                        choices=['baseline', 'small_dataset', 'fine_detail', 'fast_training',
+                                 'good_vs_rust_optimized', 'rtdetr_optimized'],
                         help='Hyperparameter preset (default: small_dataset)')
     parser.add_argument('--data', default=DEFAULT_DATA_CONFIG,
                         help='Path to dataset.yaml')

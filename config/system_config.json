@@ -8,7 +8,7 @@
     },
     "model": {
         "weights_path": "models/best.pt",
-        "confidence_threshold": 3.0,
+        "confidence_threshold": 0.03,
         "iou_threshold": 0.45,
         "image_size": 640
     },
@@ -19,8 +19,7 @@
         "database_path": "logs/inspections.db"
     },
     "classes": [
-        "Good",
-        "Flat_line",
-        "Unwash"
+        "Scratch",
+        "Rust"
     ]
 }

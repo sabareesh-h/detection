@@ -1,17 +1,58 @@
-# scripts to run
-
-# Opening Environment   - .\defect_env_gpu311\Scripts\activate
-
-# Directing to scripts - cd scripts
-
-# Augmenting dataset - python augment_dataset.py
-
-
-
 """
-Offline Dataset Augmentation Script for Defect Detection
-Generates augmented copies of training images with preserved YOLO bounding boxes.
-Uses albumentations for domain-specific augmentation (factory/inspection environments).
+=============================================================
+  augment_dataset.py  --  Defect detection pipeline script
+=============================================================
+HOW TO USE
+----------
+python augment_dataset.py [-h] [--input INPUT] [--labels LABELS]
+
+Examples:
+# Augment training set with 2x copies (medium intensity)
+  python augment_dataset.py --input dataset/images/train --labels dataset/labels/train --multiplier 2
+
+  # Heavy augmentation to separate output directory
+  python augment_dataset.py --input dataset/images/train --labels dataset/labels/train \
+      --output-images dataset/images/train_aug --output-labels dataset/labels/train_aug \
+      --level heavy --multiplier 10
+
+  # Preview augmentations without saving
+  python augment_dataset.py --input dataset/images/train --labels dataset/labels/train --preview
+
+FLAGS
+-----
+-h, --help            show this help message and exit
+    --input INPUT         Input images directory (default: dataset/images/train)
+    --labels LABELS       Input labels directory (default: dataset/labels/train)
+    --output-images OUTPUT_IMAGES
+    Output images directory (default: same as input â€” in-
+    place)
+    --output-labels OUTPUT_LABELS
+    Output labels directory (default: same as labels â€” in-
+    place)
+    --multiplier MULTIPLIER
+    Number of augmented copies per image (default: 2)
+    --level {light,medium,heavy}
+    Augmentation intensity (default: medium)
+    --seed SEED           Random seed for reproducibility
+    --preview             Preview augmentations in a window (no files saved)
+    --no-copy-originals   Do not copy original images to output dir
+    Examples:
+    # Augment training set with 2x copies (medium intensity)
+    python augment_dataset.py --input dataset/images/train --labels dataset/labels/train --multiplier 2
+    # Heavy augmentation to separate output directory
+    python augment_dataset.py --input dataset/images/train --labels dataset/labels/train \
+    --output-images dataset/images/train_aug --output-labels dataset/labels/train_aug \
+    --level heavy --multiplier 10
+    # Preview augmentations without saving
+    python augment_dataset.py --input dataset/images/train --labels dataset/labels/train --preview
+
+OLD EXAMPLES / SETUP
+--------------------
+# scripts to run
+# Opening Environment   - .\defect_env_gpu311\Scripts\activate
+# Directing to scripts - cd scripts
+# Augmenting dataset - python augment_dataset.py
+=============================================================
 """
 
 import os

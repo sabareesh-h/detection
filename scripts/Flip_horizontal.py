@@ -1,3 +1,17 @@
+"""
+=============================================================
+  Flip_horizontal.py  --  Defect detection pipeline script
+=============================================================
+HOW TO USE
+----------
+python Flip_horizontal.py
+
+FLAGS
+-----
+(No flags defined or --help not available)
+=============================================================
+"""
+
 import cv2, glob, os
 folder = r'C:\Users\RohithSuryaCKM\Downloads\Projects\Image_detection\scripts\dataset\raw\scratch'
 files = [f for f in glob.glob(folder + '/*.png')]

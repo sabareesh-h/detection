@@ -1,19 +1,22 @@
-# scripts to run
-
-# Opening Environment   - .\defect_env_gpu311\Scripts\activate
-
-# Directing to scripts - cd scripts
-
-# Preparing dataset - python prepare_dataset.py
-
-
-
-
-
 """
-Dataset Preparation Script
-Merges CVAT YOLO exports with original images into a unified YOLO dataset structure.
-Then splits into train/val/test sets.
+=============================================================
+  prepare_dataset.py  --  Defect detection pipeline script
+=============================================================
+HOW TO USE
+----------
+python prepare_dataset.py
+
+FLAGS
+-----
+(No flags defined or --help not available)
+
+OLD EXAMPLES / SETUP
+--------------------
+# scripts to run
+# Opening Environment   - .\defect_env_gpu311\Scripts\activate
+# Directing to scripts - cd scripts
+# Preparing dataset - python prepare_dataset.py
+=============================================================
 """
 
 import os
@@ -37,8 +40,8 @@ ANNOTATION_SOURCES = [
 ]
 
 # Class names (from obj.names in your CVAT exports)
-CLASS_NAMES = {0: "Good(Top)", 1: "Rust(Top)", 2: "Rust(Mid)", 3: "Rust(Bottom)", 4: "Rust(Thread)", 5: "Good(Mid)", 6: "Good(Thread)", 7: "Good(Bottom)"}
-
+CLASS_NAMES = {0: "Scratch", 1: "Rust"}
+    
 # Output dataset directory
 OUTPUT_DIR = PROJECT_ROOT / "scripts" / "dataset"
 

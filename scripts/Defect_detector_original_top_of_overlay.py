@@ -1,0 +1,672 @@
+"""
+=============================================================
+  Defect_detector_original_top_of_overlay.py  --  Defect detection pipeline script
+=============================================================
+HOW TO USE
+----------
+python Defect_detector_original_top_of_overlay.py [-h] --mode
+
+Examples:
+python defect_detector.py --mode live --model path/to/best.pt
+  python defect_detector.py --mode image --model path/to/best.pt
+  python defect_detector.py --mode video --model path/to/best.pt --source video.mp4
+  python defect_detector.py --mode image --model path/to/best.pt --source photo.jpg
+
+FLAGS
+-----
+-h, --help            show this help message and exit
+    --mode {live,image,video}
+    Inference mode: live (camera feed), image (single
+    capture/file), video (video file)
+    --model MODEL         Path to trained model
+    --source SOURCE       Source file path â€” image file for "image" mode, video
+    file for "video" mode. If not provided in "image"
+    mode, captures from camera.
+    --config CONFIG       Path to system config
+    --conf CONF           Confidence threshold (default: 0.05)
+    --mock                Use mock camera for testing (no hardware needed)
+    Modes:
+    live    - Live camera feed with bounding boxes (press 'q' to quit, 's' to snapshot)
+    image   - Capture single image from camera, show detection result
+    video   - Process a video file (.mp4) with detection
+    Examples:
+    python defect_detector.py --mode live --model path/to/best.pt
+    python defect_detector.py --mode image --model path/to/best.pt
+    python defect_detector.py --mode video --model path/to/best.pt --source video.mp4
+    python defect_detector.py --mode image --model path/to/best.pt --source photo.jpg
+=============================================================
+"""
+
+import os
+import json
+import time
+import sqlite3
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
+
+import cv2
+import numpy as np
+
+try:
+    from ultralytics import YOLO
+    ULTRALYTICS_AVAILABLE = True
+except ImportError:
+    ULTRALYTICS_AVAILABLE = False
+
+# Import camera module
+from camera_capture import get_camera, BaslerCamera, MockCamera, convert_to_greyscale
+
+
+class DefectDetector:
+    """Production defect detection system"""
+    
+    def __init__(
+        self,
+        model_path: str,
+        config_path: str = None,
+        conf_threshold: float = 0.03,
+        iou_threshold: float = 0.2,
+        device: str = '0'
+    ):
+        """
+        Initialize defect detector
+        
+        Args:
+            model_path: Path to trained YOLOv11 model weights
+            config_path: Path to system_config.json
+            conf_threshold: Minimum confidence for detection
+            iou_threshold: IoU threshold for NMS
+            device: GPU device ('0', '1', 'cpu')
+        """
+        if not ULTRALYTICS_AVAILABLE:
+            raise ImportError("ultralytics not installed")
+        
+        self.model_path = model_path
+        self.conf_threshold = conf_threshold
+        self.iou_threshold = iou_threshold
+        self.device = device
+        
+        # Load configuration
+        self.config = self._load_config(config_path)
+        
+        # Load model
+        print(f"Loading model: {model_path}")
+        self.model = YOLO(model_path)
+        self.class_names = self.model.names
+        
+        # Warmup model
+        self._warmup()
+        
+        print(f"Detector initialized. Classes: {list(self.class_names.values())}")
+    
+    def _load_config(self, config_path: str) -> dict:
+        """Load configuration from JSON file"""
+        default_config = {
+            "model": {
+                "confidence_threshold": 0.05,
+                "iou_threshold": 0.20,
+                "image_size": 640
+            },
+            "inspection": {
+                "save_images": True,
+                "save_path": "logs/inspections",
+                "log_to_database": True,
+                "database_path": "logs/inspections.db"
+            }
+        }
+        
+        if config_path and os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                return json.load(f)
+        
+        return default_config
+    
+    def _warmup(self, iterations: int = 3):
+        """Warmup model with dummy inference"""
+        print("Warming up model...")
+        dummy = np.zeros((640, 640, 3), dtype=np.uint8)
+        for _ in range(iterations):
+            self.model(dummy, verbose=False)
+        print("Warmup complete")
+    
+    def detect(self, image: np.ndarray) -> Dict:
+        """
+        Run defect detection on image.
+        The frame is first converted to rust-aware greyscale (CLAHE + rust
+        darkening) — matching the preprocessing used during training —
+        before being passed to the YOLO model.
+        
+        Args:
+            image: BGR image as numpy array
+            
+        Returns:
+            dict with detection results
+        """
+        start_time = time.time()
+        
+        # ── Greyscale pre-processing (same algorithm as camera_capture) ──
+        grey_image = convert_to_greyscale(image)
+        
+        # Run inference on greyscale frame
+        results = self.model(
+            grey_image,
+            conf=self.conf_threshold,
+            iou=self.iou_threshold,
+            device=self.device,
+            verbose=False
+        )
+        
+        inference_time_ms = (time.time() - start_time) * 1000
+        
+        # Parse results
+        defects = []
+        for result in results:
+            for box in result.boxes:
+                class_id = int(box.cls)
+                defects.append({
+                    'class': self.class_names[class_id],
+                    'class_id': class_id,
+                    'confidence': round(float(box.conf), 4),
+                    'bbox': [round(x, 2) for x in box.xyxy.tolist()[0]],
+                    'bbox_normalized': [round(x, 4) for x in box.xywhn.tolist()[0]]
+                })
+        
+        # Sort by confidence (highest first)
+        defects.sort(key=lambda x: x['confidence'], reverse=True)
+        
+        return {
+            'is_defective': len(defects) > 0,
+            'defect_count': len(defects),
+            'defects': defects,
+            'inference_time_ms': round(inference_time_ms, 2),
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    def detect_from_file(self, image_path: str) -> Dict:
+        """Load image from file and run detection (greyscale pre-processing applied automatically)."""
+        image = cv2.imread(image_path)
+        if image is None:
+            return {'error': f'Failed to load image: {image_path}'}
+        
+        result = self.detect(image)   # greyscale conversion happens inside detect()
+        result['image_path'] = image_path
+        return result
+    
+    def detect_from_video(self, video_path: str, output_path: Optional[str] = None):
+        """Run detection on a video file"""
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            print(f"Error: Could not open video {video_path}")
+            return
+            
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = int(cap.get(cv2.CAP_PROP_FPS))
+        
+        out = None
+        if output_path is not None:
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+            
+        print(f"Processing video: {video_path}")
+        print("Press 'q' to quit early.")
+        
+        try:
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                # Convert to greyscale before inference; draw results on original frame
+                result = self.detect(frame)          # greyscale applied inside detect()
+                annotated = self.draw_results(frame, result)
+                
+                if out is not None:
+                    out.write(annotated)
+                
+                cv2.imshow("Defect Detection - Video", cv2.resize(annotated, (800, 600)))
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+        finally:
+            cap.release()
+            if out is not None:
+                out.release()
+            cv2.destroyAllWindows()
+    
+    def draw_results(self, image: np.ndarray, result: Dict) -> np.ndarray:
+        """
+        Draw detection results on image
+        
+        Args:
+            image: Original image
+            result: Detection result dict
+            
+        Returns:
+            Annotated image
+        """
+        annotated = image.copy()
+        h, w = annotated.shape[:2]
+        
+        # Scale text/thickness based on image size (reference: 640px)
+        scale = max(w, h) / 640.0
+        font_scale = 0.3 * scale
+        thickness = max(1, int(2 * scale))
+        box_thickness = max(2, int(3 * scale))
+        label_pad = int(10 * scale)
+        
+        colors = {
+            'scratch': (0, 255, 255),      # Yellow
+            'crack': (0, 0, 255),          # Red
+            'dent': (255, 0, 255),         # Magenta
+            'discoloration': (255, 165, 0), # Orange
+            'contamination': (0, 255, 0),   # Green
+        }
+        default_color = (255, 255, 255)
+        
+        for defect in result.get('defects', []):
+            bbox = defect['bbox']
+            x1, y1, x2, y2 = [int(x) for x in bbox]
+            
+            color = colors.get(defect['class'], default_color)
+            
+            # Draw bounding box
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, box_thickness)
+            
+            # Draw label
+            label = f"{defect['class']}: {defect['confidence']:.1%}"
+            label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
+            cv2.rectangle(annotated, (x1, y1 - label_size[1] - label_pad), (x1 + label_size[0] + 4, y1), color, -1)
+            cv2.putText(annotated, label, (x1 + 2, y1 - int(label_pad / 2)), 
+                       cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), thickness)
+        
+        # Draw overall status
+        status = " " if result['is_defective'] else " "
+        status_color = (0, 0, 255) if result['is_defective'] else (0, 255, 0)
+        status_scale = 1.5 * scale
+        status_thick = max(2, int(3 * scale))
+        cv2.putText(annotated, status, (10, int(50 * scale)),
+                   cv2.FONT_HERSHEY_SIMPLEX, status_scale, status_color, status_thick)
+        
+        # Draw inference time
+        cv2.putText(annotated, f"{result['inference_time_ms']:.1f}ms", (10, int(90 * scale)),
+                   cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness)
+        
+        return annotated
+
+
+class InspectionLogger:
+    """Log inspection results to SQLite database"""
+    
+    def __init__(self, db_path: str = "logs/inspections.db"):
+        self.db_path = db_path
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        self._init_db()
+    
+    def _init_db(self):
+        """Create database schema"""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS inspections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                image_path TEXT,
+                result TEXT,
+                defect_count INTEGER,
+                defects TEXT,
+                max_confidence REAL,
+                inference_time_ms REAL,
+                shift TEXT,
+                batch TEXT
+            )
+        ''')
+        conn.commit()
+        conn.close()
+    
+    def log(self, result: Dict, image_path: str = None, 
+            shift: str = None, batch: str = None):
+        """Log inspection result to database"""
+        conn = sqlite3.connect(self.db_path)
+        
+        max_conf = max([d['confidence'] for d in result['defects']]) if result['defects'] else 0
+        
+        conn.execute('''
+            INSERT INTO inspections 
+            (timestamp, image_path, result, defect_count, defects, 
+             max_confidence, inference_time_ms, shift, batch)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            result['timestamp'],
+            image_path,
+            'REJECT' if result['is_defective'] else 'PASS',
+            result['defect_count'],
+            json.dumps(result['defects']),
+            max_conf,
+            result['inference_time_ms'],
+            shift,
+            batch
+        ))
+        
+        conn.commit()
+        conn.close()
+    
+    def get_stats(self, hours: int = 24) -> Dict:
+        """Get inspection statistics for the last N hours"""
+        conn = sqlite3.connect(self.db_path)
+        
+        # Total counts
+        results = conn.execute('''
+            SELECT result, COUNT(*) FROM inspections 
+            WHERE datetime(timestamp) > datetime('now', ?)
+            GROUP BY result
+        ''', (f'-{hours} hours',)).fetchall()
+        
+        stats = {result: count for result, count in results}
+        total = sum(stats.values())
+        
+        conn.close()
+        
+        return {
+            'period_hours': hours,
+            'total_inspections': total,
+            'passed': stats.get('PASS', 0),
+            'rejected': stats.get('REJECT', 0),
+            'defect_rate': stats.get('REJECT', 0) / max(1, total)
+        }
+
+
+class ProductionInspectionSystem:
+    """Complete production inspection system with camera integration"""
+    
+    def __init__(
+        self,
+        model_path: str,
+        config_path: str = "config/system_config.json",
+        conf_threshold: float = 0.01,
+        use_mock_camera: bool = False
+    ):
+        """
+        Initialize production inspection system
+        
+        Args:
+            model_path: Path to trained model
+            config_path: Path to system configuration
+            conf_threshold: Confidence threshold for detection
+            use_mock_camera: Use mock camera for testing
+        """
+        self.detector = DefectDetector(model_path, config_path, conf_threshold=conf_threshold)
+        self.camera = get_camera(config_path, use_mock=use_mock_camera)
+        self.logger = InspectionLogger()
+        
+        self._running = False
+    
+    def inspect_once(self, save_image: bool = True) -> Dict:
+        """
+        Run single inspection cycle
+        
+        Returns:
+            Inspection result
+        """
+        # Capture image
+        image = self.camera.capture()
+        if image is None:
+            return {'error': 'Camera capture failed'}
+        
+        # Run detection
+        result = self.detector.detect(image)
+        
+        # Save image if requested
+        if save_image:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            status = 'reject' if result['is_defective'] else 'pass'
+            
+            save_dir = Path("logs/inspections") / status
+            save_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Save annotated image
+            annotated = self.detector.draw_results(image, result)
+            image_path = save_dir / f"{status}_{timestamp}.png"
+            cv2.imwrite(str(image_path), annotated)
+            
+            result['saved_image'] = str(image_path)
+        
+        # Log to database
+        self.logger.log(result, result.get('saved_image'))
+        
+        return result
+    
+    def print_result(self, result: Dict):
+        """Print formatted inspection result"""
+        if result.get('error'):
+            print(f"❌ Error: {result['error']}")
+            return
+        
+        if result['is_defective']:
+            print(f"⛔ REJECT - {result['defect_count']} defect(s) detected")
+            for d in result['defects']:
+                print(f"   └─ {d['class']}: {d['confidence']:.1%}")
+        else:
+            print(f"✅ PASS - No defects detected")
+        
+        print(f"   Inference: {result['inference_time_ms']:.1f}ms")
+    
+    def start(self):
+        """Start continuous inspection mode with live video feed"""
+        if not self.camera.connect():
+            print("Failed to connect to camera")
+            return
+        
+        self._running = True
+        print("\n" + "="*50)
+        print("LIVE INSPECTION MODE")
+        print("Press 'q' to quit | 's' to save snapshot")
+        print("="*50 + "\n")
+        
+        frame_count = 0
+        fps_start = time.time()
+        display_fps = 0.0
+        
+        try:
+            while self._running:
+                # Capture image
+                image = self.camera.capture()
+                if image is None:
+                    print("Camera capture failed, retrying...")
+                    time.sleep(0.5)
+                    continue
+                
+                # Run detection
+                result = self.detector.detect(image)
+                
+                # Draw bounding boxes on the frame
+                annotated = self.detector.draw_results(image, result)
+                
+                # Calculate FPS
+                frame_count += 1
+                elapsed = time.time() - fps_start
+                if elapsed >= 1.0:
+                    display_fps = frame_count / elapsed
+                    frame_count = 0
+                    fps_start = time.time()
+                
+                # Draw FPS and stats on frame
+                cv2.putText(annotated, f"FPS: {display_fps:.1f}", (10, annotated.shape[0] - 20),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                cv2.putText(annotated, f"Defects: {result['defect_count']}", (10, annotated.shape[0] - 50),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                
+                # Show live feed
+                cv2.namedWindow("Defect Detection - Live Feed", cv2.WINDOW_NORMAL)
+                cv2.imshow("Defect Detection - Live Feed", annotated)
+                
+                # Handle key presses
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q'):
+                    print("\nQuitting live feed...")
+                    break
+                elif key == ord('s'):
+                    # Save snapshot
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                    status = 'reject' if result['is_defective'] else 'pass'
+                    save_dir = Path("logs/inspections") / status
+                    save_dir.mkdir(parents=True, exist_ok=True)
+                    snap_path = save_dir / f"snapshot_{status}_{timestamp}.png"
+                    cv2.imwrite(str(snap_path), annotated)
+                    print(f"  Snapshot saved: {snap_path}")
+                
+                # Log to database
+                self.logger.log(result)
+                
+        except KeyboardInterrupt:
+            print("\nStopping inspection...")
+        finally:
+            cv2.destroyAllWindows()
+            self.stop()
+    
+    def stop(self):
+        """Stop inspection and cleanup"""
+        self._running = False
+        self.camera.disconnect()
+        
+        # Print final statistics
+        stats = self.logger.get_stats(hours=24)
+        print("\n" + "="*50)
+        print("SESSION STATISTICS (Last 24 hours)")
+        print("="*50)
+        print(f"Total inspections: {stats['total_inspections']}")
+        print(f"Passed: {stats['passed']}")
+        print(f"Rejected: {stats['rejected']}")
+        print(f"Defect rate: {stats['defect_rate']:.2%}")
+        print("="*50)
+
+
+def main():
+    """Main entry point for production inference"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description='Defect Detection Inference',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Modes:
+  live    - Live camera feed with bounding boxes (press 'q' to quit, 's' to snapshot)
+  image   - Capture single image from camera, show detection result
+  video   - Process a video file (.mp4) with detection
+
+Examples:
+  python defect_detector.py --mode live --model path/to/best.pt
+  python defect_detector.py --mode image --model path/to/best.pt
+  python defect_detector.py --mode video --model path/to/best.pt --source video.mp4
+  python defect_detector.py --mode image --model path/to/best.pt --source photo.jpg
+        """
+    )
+    parser.add_argument('--mode', required=True, choices=['live', 'image', 'video'],
+                       help='Inference mode: live (camera feed), image (single capture/file), video (video file)')
+    parser.add_argument('--model', default='models/best.pt',
+                       help='Path to trained model')
+    parser.add_argument('--source', type=str, default=None,
+                       help='Source file path — image file for "image" mode, video file for "video" mode. '
+                            'If not provided in "image" mode, captures from camera.')
+    parser.add_argument('--config', default='config/system_config.json',
+                       help='Path to system config')
+    parser.add_argument('--conf', type=float, default=0.03,
+                       help='Confidence threshold (default: 0.05)')
+    parser.add_argument('--mock', action='store_true',
+                       help='Use mock camera for testing (no hardware needed)')
+    
+    args = parser.parse_args()
+    
+    # ---- MODE: VIDEO ----
+    if args.mode == 'video':
+        if not args.source:
+            print("Error: --source is required for video mode.")
+            print("Usage: python defect_detector.py --mode video --model best.pt --source video.mp4")
+            return
+        detector = DefectDetector(args.model, args.config, conf_threshold=args.conf)
+        output_path = args.source.replace('.mp4', '_output.mp4')
+        print(f"Output will be saved to: {output_path}")
+        detector.detect_from_video(args.source, output_path)
+        return
+
+    # ---- MODE: IMAGE ----
+    if args.mode == 'image':
+        if args.source:
+            # Detect from image file
+            detector = DefectDetector(args.model, args.config, conf_threshold=args.conf)
+            result = detector.detect_from_file(args.source)
+            
+            if result.get('error'):
+                print(f"Error: {result['error']}")
+                return
+            
+            # Show annotated image in window
+            image = cv2.imread(args.source)
+            annotated = detector.draw_results(image, result)
+            
+            if result['is_defective']:
+                print(f"REJECT - {result['defect_count']} defect(s)")
+                for d in result['defects']:
+                    print(f"  {d['class']}: {d['confidence']:.1%}")
+            else:
+                print("PASS - No defects")
+            print(f"Inference time: {result['inference_time_ms']:.1f}ms")
+            
+            cv2.namedWindow("Defect Detection - Image", cv2.WINDOW_NORMAL)
+            cv2.imshow("Defect Detection - Image", annotated)
+            print("\nPress any key to close the window...")
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+        else:
+            # Capture from camera and show
+            system = ProductionInspectionSystem(
+                model_path=args.model,
+                config_path=args.config,
+                conf_threshold=args.conf,
+                use_mock_camera=args.mock
+            )
+            system.camera.connect()
+            
+            image = system.camera.capture()
+            if image is None:
+                print("Camera capture failed")
+                system.camera.disconnect()
+                return
+            
+            result = system.detector.detect(image)
+            annotated = system.detector.draw_results(image, result)
+            
+            if result['is_defective']:
+                print(f"REJECT - {result['defect_count']} defect(s)")
+                for d in result['defects']:
+                    print(f"  {d['class']}: {d['confidence']:.1%}")
+            else:
+                print("PASS - No defects")
+            print(f"Inference time: {result['inference_time_ms']:.1f}ms")
+            
+            cv2.namedWindow("Defect Detection - Camera Capture", cv2.WINDOW_NORMAL)
+            cv2.imshow("Defect Detection - Camera Capture", annotated)
+            print("\nPress 's' to save, any other key to close...")
+            key = cv2.waitKey(0) & 0xFF
+            if key == ord('s'):
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                save_path = f"logs/capture_{timestamp}.png"
+                os.makedirs("logs", exist_ok=True)
+                cv2.imwrite(save_path, annotated)
+                print(f"Saved: {save_path}")
+            cv2.destroyAllWindows()
+            system.camera.disconnect()
+        return
+
+    # ---- MODE: LIVE ----
+    if args.mode == 'live':
+        system = ProductionInspectionSystem(
+            model_path=args.model,
+            config_path=args.config,
+            conf_threshold=args.conf,
+            use_mock_camera=args.mock
+        )
+        system.start()
+
+
+if __name__ == "__main__":
+    main()

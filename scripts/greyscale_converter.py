@@ -1,21 +1,21 @@
 """
-Rust Area Darkener — YOLO Dataset Preprocessor
-================================================
-Darkens rust regions in part images so YOLO can clearly distinguish
-rust from clean metal surfaces during training.
+=============================================================
+  greyscale_converter.py  --  Defect detection pipeline script
+=============================================================
+HOW TO USE
+----------
+python greyscale_converter.py [-h] --input INPUT [--output OUTPUT]
 
-Usage:
-    # Single image
-    python darken_rust.py --input part.jpg
-
-    # Whole dataset folder
-    python darken_rust.py --input dataset/images/ --output dataset/images_processed/
-
-    # Adjust darkening strength (0.0 = no change, 1.0 = pure black)
-    python darken_rust.py --input dataset/images/ --strength 0.6
-
-Requirements:
-    pip install opencv-python numpy
+FLAGS
+-----
+-h, --help            show this help message and exit
+    --input INPUT, -i INPUT
+    Image file or folder
+    --output OUTPUT, -o OUTPUT
+    Output folder
+    --strength STRENGTH, -s STRENGTH
+    Darkening strength 0.0â€“1.0 (default: 0.55)
+=============================================================
 """
 
 import argparse

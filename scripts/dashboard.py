@@ -1,3 +1,21 @@
+"""
+=============================================================
+  dashboard.py  --  Defect detection pipeline script
+=============================================================
+HOW TO USE
+----------
+python dashboard.py
+
+FLAGS
+-----
+(No flags defined or --help not available)
+
+OLD EXAMPLES / SETUP
+--------------------
+# streamlit run dashboard.py
+=============================================================
+"""
+
 import sqlite3
 import pandas as pd
 import streamlit as st
@@ -87,8 +105,8 @@ else:
                     "confidence": d.get('confidence', 0),
                     "zone": zone_name
                 })
-        except:
-            pass
+        except Exception as e:
+            print(f"Error parsing defects for row {idx}: {e}")
             
     df_defects = pd.DataFrame(flat_defects)
 

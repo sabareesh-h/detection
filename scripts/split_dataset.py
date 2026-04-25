@@ -1,6 +1,22 @@
 """
-Dataset Splitting Utility
-Splits raw dataset into train/val/test sets with stratified sampling
+=============================================================
+  split_dataset.py  --  Defect detection pipeline script
+=============================================================
+HOW TO USE
+----------
+python split_dataset.py [-h] [--output OUTPUT] [--train TRAIN] [--val VAL]
+
+FLAGS
+-----
+-h, --help            show this help message and exit
+    --output OUTPUT, -o OUTPUT
+    Output directory for split dataset
+    --train TRAIN         Training set ratio (default: 0.70)
+    --val VAL             Validation set ratio (default: 0.15)
+    --test TEST           Test set ratio (default: 0.15)
+    --seed SEED           Random seed (default: 42)
+    --move                Move files instead of copying
+=============================================================
 """
 
 import os

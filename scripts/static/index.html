@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Defect Detection System</title>
+<style>
+  /* ── Reset & tokens ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:         #0d0f14;
+    --surface:    #151922;
+    --surface2:   #1e2433;
+    --border:     #2a3147;
+    --accent:     #3b82f6;
+    --accent2:    #6366f1;
+    --ok:         #22c55e;
+    --nok:        #ef4444;
+    --warn:       #f59e0b;
+    --text:       #e2e8f0;
+    --muted:      #64748b;
+    --radius:     12px;
+    --radius-sm:  8px;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Header ── */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 24px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .logo {
+    width: 36px; height: 36px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 700;
+  }
+
+  header h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.02em; }
+  header p  { font-size: 12px; color: var(--muted); margin-top: 1px; }
+
+  .header-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .status-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    transition: all 0.3s;
+  }
+
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    animation: pulse 1.5s infinite;
+  }
+
+  .status-pill.ok   { border-color: var(--ok);  color: var(--ok);  }
+  .status-pill.ok   .status-dot  { background: var(--ok);  }
+  .status-pill.nok  { border-color: var(--nok); color: var(--nok); }
+  .status-pill.nok  .status-dot  { background: var(--nok); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.4; }
+  }
+
+  /* ── Layout ── */
+  .layout {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    grid-template-rows: 1fr auto;
+    gap: 16px;
+    padding: 16px;
+    min-height: 0;
+  }
+
+  /* ── Feed panel ── */
+  .feed-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+
+  .feed-panel img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    background: #000;
+  }
+
+  .feed-overlay {
+    position: absolute;
+    bottom: 12px; left: 12px;
+    display: flex; gap: 8px; flex-wrap: wrap;
+  }
+
+  .feed-btn {
+    padding: 6px 14px;
+    background: rgba(0,0,0,0.65);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: #fff;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .feed-btn:hover { background: rgba(59,130,246,0.5); border-color: var(--accent); }
+
+  /* ── Side panel ── */
+  .side-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow-y: auto;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+  }
+
+  .card-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+
+  /* ── KPI row ── */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+
+  .kpi {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 12px 10px;
+    text-align: center;
+  }
+
+  .kpi-val  { font-size: 24px; font-weight: 700; line-height: 1; }
+  .kpi-lbl  { font-size: 10px; color: var(--muted); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+  .kpi.ok  .kpi-val { color: var(--ok);  }
+  .kpi.nok .kpi-val { color: var(--nok); }
+  .kpi.fps .kpi-val { color: var(--accent); }
+
+  /* ── Defects list ── */
+  .defect-list { display: flex; flex-direction: column; gap: 6px; }
+
+  .defect-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    transition: border-color 0.2s;
+  }
+
+  .defect-item:hover { border-color: var(--accent); }
+
+  .defect-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    background: var(--nok);
+  }
+
+  .defect-zone {
+    font-size: 10px;
+    color: var(--muted);
+    margin-left: auto;
+    white-space: nowrap;
+  }
+
+  .defect-conf {
+    font-weight: 600;
+    color: var(--warn);
+    min-width: 42px;
+    text-align: right;
+  }
+
+  .empty-msg {
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+    padding: 20px 0;
+  }
+
+  /* ── Sliders ── */
+  .slider-group { display: flex; flex-direction: column; gap: 14px; }
+
+  .slider-row { display: flex; flex-direction: column; gap: 4px; }
+
+  .slider-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+  }
+
+  .slider-label { font-weight: 500; }
+
+  .slider-val {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent);
+    min-width: 36px;
+    text-align: right;
+  }
+
+  input[type=range] {
+    -webkit-appearance: none;
+    width: 100%;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border);
+    outline: none;
+    cursor: pointer;
+  }
+
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--bg);
+    transition: transform 0.15s;
+  }
+
+  input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+
+  .apply-btn {
+    width: 100%;
+    padding: 9px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border: none;
+    border-radius: var(--radius-sm);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 8px;
+    transition: opacity 0.2s, transform 0.1s;
+  }
+
+  .apply-btn:hover { opacity: 0.88; }
+  .apply-btn:active { transform: scale(0.98); }
+
+  /* ── Mini chart ── */
+  #history-chart {
+    width: 100%;
+    height: 60px;
+    border-radius: 6px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+  }
+
+  /* ── Bottom stats bar ── */
+  .stats-bar {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .stat-chip {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 14px;
+    font-size: 12px;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .stat-chip span { color: var(--muted); }
+  .stat-chip strong { color: var(--text); }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* ── Toast ── */
+  #toast {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: all 0.3s;
+    pointer-events: none;
+    z-index: 200;
+  }
+
+  #toast.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<header>
+  <div class="logo">D</div>
+  <div>
+    <h1>Defect Detection System</h1>
+    <p>Live Inspection Dashboard</p>
+  </div>
+  <div class="header-right">
+    <a href="http://localhost:8501" target="_blank" class="status-pill" style="text-decoration: none; border-color: var(--accent); color: var(--text); background: rgba(59,130,246,0.1);">
+      📊 Analytics Dashboard
+    </a>
+    <div class="status-pill" id="result-pill">
+      <div class="status-dot"></div>
+      <span id="result-label">Connecting…</span>
+    </div>
+  </div>
+</header>
+
+<!-- ── Main layout ── -->
+<div class="layout">
+
+  <!-- Live feed -->
+  <div class="feed-panel">
+    <img id="feed" src="/feed" alt="Live Feed" onload="updateSvgViewBox(this)"/>
+    <svg id="highlight-svg" viewBox="0 0 1000 1000" preserveAspectRatio="xMidYMid meet" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10;">
+      <rect id="highlight-rect" x="0" y="0" width="0" height="0" fill="rgba(255, 255, 0, 0.4)" stroke="#ffff00" stroke-width="6" opacity="0" style="transition: opacity 0.1s;" rx="4" />
+    </svg>
+    <div class="feed-overlay">
+      <button class="feed-btn" onclick="toggleGrey()">⬛ Toggle Greyscale</button>
+      <button class="feed-btn" onclick="saveSnapshot()">📸 Snapshot</button>
+    </div>
+  </div>
+
+  <!-- Side panel -->
+  <div class="side-panel">
+
+    <!-- KPIs -->
+    <div class="card">
+      <div class="card-title">Session Stats</div>
+      <div class="kpi-row">
+        <div class="kpi ok">
+          <div class="kpi-val" id="kpi-ok">–</div>
+          <div class="kpi-lbl">OK</div>
+        </div>
+        <div class="kpi nok">
+          <div class="kpi-val" id="kpi-nok">–</div>
+          <div class="kpi-lbl">NOK</div>
+        </div>
+        <div class="kpi fps">
+          <div class="kpi-val" id="kpi-fps">–</div>
+          <div class="kpi-lbl">FPS</div>
+        </div>
+      </div>
+
+      <!-- Mini bar chart (OK vs NOK history) -->
+      <div style="margin-top:12px;">
+        <div class="card-title" style="margin-bottom:6px;">Recent Results (last 50)</div>
+        <canvas id="history-chart"></canvas>
+      </div>
+    </div>
+
+    <!-- Active defects -->
+    <div class="card">
+      <div class="card-title">Active Defects</div>
+      <div class="defect-list" id="defect-list">
+        <div class="empty-msg">No defects detected</div>
+      </div>
+    </div>
+
+    <!-- Zone confidence sliders -->
+    <div class="card">
+      <div class="card-title">Zone Confidence Thresholds</div>
+      <div class="slider-group" id="zone-sliders">
+        <!-- populated by JS -->
+      </div>
+
+      <!-- Min area slider -->
+      <div class="slider-row" style="margin-top:14px;">
+        <div class="slider-header">
+          <span class="slider-label">Min Defect Area (px²)</span>
+          <span class="slider-val" id="area-val">150</span>
+        </div>
+        <input type="range" id="slider-area" min="0" max="2000" value="150"
+               oninput="document.getElementById('area-val').textContent=this.value"/>
+      </div>
+
+      <!-- IOU slider -->
+      <div class="slider-row" style="margin-top:10px;">
+        <div class="slider-header">
+          <span class="slider-label">NMS IoU Threshold</span>
+          <span class="slider-val" id="iou-val">0.45</span>
+        </div>
+        <input type="range" id="slider-iou" min="1" max="99" value="45"
+               oninput="document.getElementById('iou-val').textContent=(this.value/100).toFixed(2)"/>
+      </div>
+
+      <button class="apply-btn" onclick="applyThresholds()">Apply Thresholds</button>
+    </div>
+
+  </div><!-- /side-panel -->
+
+  <!-- Bottom stats bar -->
+  <div class="stats-bar">
+    <div class="stat-chip"><span>Defect Rate:</span><strong id="stat-rate">–</strong></div>
+    <div class="stat-chip"><span>Avg Inference:</span><strong id="stat-ms">–</strong></div>
+    <div class="stat-chip"><span>Total Inspected:</span><strong id="stat-total">–</strong></div>
+    <div class="stat-chip"><span>Last Updated:</span><strong id="stat-ts">–</strong></div>
+  </div>
+
+</div><!-- /layout -->
+
+<div id="toast"></div>
+
+<script>
+// ── Zone slider initialisation ──────────────────────────────────────────
+
+const ZONE_NAMES = ["Top", "Mid", "Thread", "Bottom"];
+let zoneConf = [0.03, 0.03, 0.03, 0.03];
+
+function buildZoneSliders(names, vals) {
+  const container = document.getElementById("zone-sliders");
+  container.innerHTML = "";
+  names.forEach((name, i) => {
+    const pct = Math.round(vals[i] * 100);
+    container.innerHTML += `
+      <div class="slider-row">
+        <div class="slider-header">
+          <span class="slider-label">${name}</span>
+          <span class="slider-val" id="zval-${i}">${pct}%</span>
+        </div>
+        <input type="range" id="zslider-${i}" min="1" max="100" value="${pct}"
+               oninput="document.getElementById('zval-${i}').textContent=this.value+'%'"/>
+      </div>`;
+  });
+}
+
+// ── Fetch initial thresholds from server ────────────────────────────────
+
+async function loadThresholds() {
+  try {
+    const r = await fetch("/api/thresholds");
+    const d = await r.json();
+    buildZoneSliders(d.zone_names || ZONE_NAMES, d.zone_conf || zoneConf);
+    document.getElementById("slider-area").value = d.min_area_px || 150;
+    document.getElementById("area-val").textContent = Math.round(d.min_area_px || 150);
+    const iouPct = Math.round((d.iou_threshold || 0.45) * 100);
+    document.getElementById("slider-iou").value = iouPct;
+    document.getElementById("iou-val").textContent = (iouPct / 100).toFixed(2);
+  } catch {
+    buildZoneSliders(ZONE_NAMES, zoneConf);
+  }
+}
+
+// ── Apply thresholds ─────────────────────────────────────────────────────
+
+async function applyThresholds() {
+  const zone_conf = ZONE_NAMES.map((_, i) => {
+    const el = document.getElementById(`zslider-${i}`);
+    return el ? parseInt(el.value) / 100 : 0.03;
+  });
+  const min_area_px  = parseFloat(document.getElementById("slider-area").value);
+  const iou_threshold = parseFloat(document.getElementById("slider-iou").value) / 100;
+
+  try {
+    await fetch("/api/thresholds", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ zone_conf, min_area_px, iou_threshold }),
+    });
+    showToast("✅ Thresholds applied");
+  } catch {
+    showToast("❌ Failed to apply thresholds");
+  }
+}
+
+// ── Toggle greyscale ─────────────────────────────────────────────────────
+
+async function toggleGrey() {
+  const r = await fetch("/api/toggle_grey", { method: "POST" });
+  const d = await r.json();
+  showToast(d.show_grey ? "⬛ Greyscale ON" : "🎨 Colour ON");
+}
+
+// ── Snapshot ─────────────────────────────────────────────────────────────
+
+async function saveSnapshot() {
+  const r = await fetch("/api/snapshot", { method: "POST" });
+  const d = await r.json();
+  showToast(d.saved ? `📸 Saved: ${d.saved.split(/[\\/]/).pop()}` : "❌ Snapshot failed");
+}
+
+// ── Poll stats & update UI ───────────────────────────────────────────────
+
+const chartCanvas = document.getElementById("history-chart");
+const ctx = chartCanvas.getContext("2d");
+
+function drawChart(history) {
+  const W = chartCanvas.offsetWidth;
+  const H = chartCanvas.height;
+  chartCanvas.width = W;
+
+  ctx.clearRect(0, 0, W, H);
+
+  if (!history || history.length === 0) return;
+
+  const n     = history.length;
+  const barW  = Math.max(2, W / n - 1);
+  const gap   = W / n;
+
+  history.forEach((entry, i) => {
+    ctx.fillStyle = entry.is_defective ? "#ef4444" : "#22c55e";
+    const x = i * gap;
+    ctx.fillRect(x, 0, barW, H);
+  });
+}
+
+let hoveredDefectIndex = -1;
+let currentDefects = [];
+let imgNaturalWidth = 1000;
+let imgNaturalHeight = 1000;
+
+function updateSvgViewBox(imgEl) {
+  if (imgEl.naturalWidth && imgEl.naturalHeight) {
+    imgNaturalWidth = imgEl.naturalWidth;
+    imgNaturalHeight = imgEl.naturalHeight;
+    document.getElementById("highlight-svg").setAttribute("viewBox", `0 0 ${imgNaturalWidth} ${imgNaturalHeight}`);
+    
+    // Adjust stroke width based on image size (roughly 0.5% of width)
+    const strokeW = Math.max(2, Math.floor(imgNaturalWidth * 0.005));
+    document.getElementById("highlight-rect").setAttribute("stroke-width", strokeW);
+  }
+}
+
+function showHighlight(nx, ny, nw, nh) {
+  const rect = document.getElementById("highlight-rect");
+  rect.setAttribute("x", nx * imgNaturalWidth);
+  rect.setAttribute("y", ny * imgNaturalHeight);
+  rect.setAttribute("width", nw * imgNaturalWidth);
+  rect.setAttribute("height", nh * imgNaturalHeight);
+  rect.setAttribute("opacity", "1");
+}
+
+function hideHighlight() {
+  document.getElementById("highlight-rect").setAttribute("opacity", "0");
+}
+
+document.getElementById("defect-list").addEventListener("mousemove", (e) => {
+  const item = e.target.closest(".defect-item");
+  if (item) {
+    const idx = item.getAttribute("data-index");
+    if (idx !== null) {
+      hoveredDefectIndex = parseInt(idx, 10);
+      const def = currentDefects[hoveredDefectIndex];
+      if (def && def.bbox_normalized) {
+        showHighlight(def.bbox_normalized[0], def.bbox_normalized[1], def.bbox_normalized[2], def.bbox_normalized[3]);
+      }
+    }
+  } else {
+    hoveredDefectIndex = -1;
+    hideHighlight();
+  }
+});
+
+document.getElementById("defect-list").addEventListener("mouseleave", () => {
+  hoveredDefectIndex = -1;
+  hideHighlight();
+});
+
+async function pollStats() {
+  try {
+    const r = await fetch("/api/stats");
+    const d = await r.json();
+
+    // KPIs
+    document.getElementById("kpi-ok").textContent  = d.ok  ?? "–";
+    document.getElementById("kpi-nok").textContent = d.nok ?? "–";
+    document.getElementById("kpi-fps").textContent = d.fps ?? "–";
+
+    // Bottom bar
+    document.getElementById("stat-rate").textContent  = `${d.nok_rate ?? 0}%`;
+    document.getElementById("stat-ms").textContent    = `${d.avg_ms ?? 0}ms`;
+    document.getElementById("stat-total").textContent = d.total ?? 0;
+    document.getElementById("stat-ts").textContent    = new Date().toLocaleTimeString();
+
+    // Result pill
+    const pill  = document.getElementById("result-pill");
+    const label = document.getElementById("result-label");
+    const latest = d.latest || {};
+    if (latest.is_defective) {
+      pill.className  = "status-pill nok";
+      label.textContent = `NOK — ${latest.defect_count} defect(s)`;
+    } else if (d.is_running) {
+      pill.className  = "status-pill ok";
+      label.textContent = "OK — No Defects";
+    } else {
+      pill.className  = "status-pill";
+      label.textContent = "Connecting…";
+    }
+
+    // Defects list
+    const listEl = document.getElementById("defect-list");
+    currentDefects = (latest.defects || []).slice(0, 10);
+    if (currentDefects.length === 0) {
+      listEl.innerHTML = `<div class="empty-msg">✅ No defects detected</div>`;
+      hideHighlight();
+      hoveredDefectIndex = -1;
+    } else {
+      const zoneLabel = ["Top", "Mid", "Thread", "Bottom"];
+      listEl.innerHTML = currentDefects.map((def, i) => `
+        <div class="defect-item" data-index="${i}" style="cursor: pointer;">
+          <div class="defect-dot"></div>
+          <span>${def.class.toUpperCase()}</span>
+          <span class="defect-zone">${zoneLabel[def.zone_idx ?? 0] ?? "–"}</span>
+          <span class="defect-conf">${(def.confidence * 100).toFixed(1)}%</span>
+        </div>`).join("");
+        
+      if (hoveredDefectIndex >= 0 && hoveredDefectIndex < currentDefects.length) {
+         const bbox = currentDefects[hoveredDefectIndex].bbox_normalized;
+         if (bbox) showHighlight(bbox[0], bbox[1], bbox[2], bbox[3]);
+      }
+    }
+
+    // Chart
+    drawChart(d.history || []);
+
+  } catch { /* server not ready yet */ }
+}
+
+// ── Toast ────────────────────────────────────────────────────────────────
+
+let toastTimer;
+function showToast(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 2500);
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────
+
+loadThresholds();
+setInterval(pollStats, 800);   // poll every 800ms
+pollStats();                   // immediate first call
+</script>
+</body>
+</html>

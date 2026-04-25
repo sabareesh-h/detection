@@ -10,6 +10,7 @@ test: images/test
 # Class names - matching CVAT annotation labels
 names:
   0: Scratch
+  1: Rust
 
 # Number of classes
-nc: 1
+nc: 2

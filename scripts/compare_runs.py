@@ -1,16 +1,52 @@
-# scripts to run
-
-# Opening Environment   - .\defect_env_gpu311\Scripts\activate
-
-# Directing to scripts - cd scripts
-
-# Comparing runs - python compare_runs.py --runs runs/detect/models
-
-
 """
-Training Run Comparison Script
-Scans Ultralytics training run directories, extracts metrics from results.csv,
-and generates comparison tables and overlay plots across experiments.
+=============================================================
+  compare_runs.py  --  Defect detection pipeline script
+=============================================================
+HOW TO USE
+----------
+python compare_runs.py [-h] [--runs-dir RUNS_DIR [RUNS_DIR ...]]
+
+Examples:
+# Compare all runs in default directory
+  python compare_runs.py
+
+  # Compare runs in a custom directory
+  python compare_runs.py --runs-dir models/
+
+  # Show detailed info for each run
+  python compare_runs.py --detailed
+
+  # Save comparison plot and JSON
+  python compare_runs.py --output logs/comparison
+
+FLAGS
+-----
+-h, --help            show this help message and exit
+    --runs-dir RUNS_DIR [RUNS_DIR ...]
+    Directories to scan for training runs (default:
+    runs/detect models)
+    --output OUTPUT       Output path prefix for plots and JSON (default:
+    logs/run_comparison)
+    --detailed            Show detailed per-run information
+    --no-plot             Skip generating plots
+    --no-json             Skip saving JSON summary
+    Examples:
+    # Compare all runs in default directory
+    python compare_runs.py
+    # Compare runs in a custom directory
+    python compare_runs.py --runs-dir models/
+    # Show detailed info for each run
+    python compare_runs.py --detailed
+    # Save comparison plot and JSON
+    python compare_runs.py --output logs/comparison
+
+OLD EXAMPLES / SETUP
+--------------------
+# scripts to run
+# Opening Environment   - .\defect_env_gpu311\Scripts\activate
+# Directing to scripts - cd scripts
+# Comparing runs - python compare_runs.py --runs runs/detect/models
+=============================================================
 """
 
 import os

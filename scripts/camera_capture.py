@@ -1,17 +1,22 @@
-# scripts to run
-
-# Opening Environment   - .\defect_env_gpu311\Scripts\activate
-
-# Directing to scripts - cd scripts
-
-# Opening camera  - python camera_capture.py
-
-
-
 """
+=============================================================
+  camera_capture.py  --  Defect detection pipeline script
+=============================================================
+HOW TO USE
+----------
+python camera_capture.py
 
-Basler Camera Capture Utility
-Captures images from Basler camera for defect detection dataset collection.
+FLAGS
+-----
+(No flags defined or --help not available)
+
+OLD EXAMPLES / SETUP
+--------------------
+# scripts to run
+# Opening Environment   - .\defect_env_gpu311\Scripts\activate
+# Directing to scripts - cd scripts
+# Opening camera  - python camera_capture.py
+=============================================================
 """
 
 import os
@@ -30,6 +35,15 @@ except ImportError:
 
 import cv2
 import numpy as np
+import torch
+try:
+    import kornia
+    KORNIA_AVAILABLE = True
+except ImportError:
+    KORNIA_AVAILABLE = False
+
+from config_manager import load_system_config
+
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +79,48 @@ def convert_to_greyscale(img_bgr: np.ndarray, strength: float = 0.55) -> np.ndar
     dark_factor = 1.0 - rust_mask * strength
     result = np.clip(grey.astype(np.float32) * dark_factor, 0, 255).astype(np.uint8)
     return cv2.cvtColor(result, cv2.COLOR_GRAY2BGR)
+
+def convert_to_greyscale_gpu(img_bgr: np.ndarray, strength: float = 0.55, device='cuda') -> np.ndarray:
+    """
+    Convert a BGR image to greyscale with rust-area darkening using GPU (PyTorch/Kornia).
+    """
+    if not KORNIA_AVAILABLE or device == 'cpu':
+        if device != 'cpu':
+            print("Warning: kornia not installed. Falling back to CPU preprocessing.")
+        return convert_to_greyscale(img_bgr, strength)
+        
+    with torch.no_grad():
+        # 1. Convert numpy BGR to PyTorch Tensor (B, C, H, W) on GPU
+        img_t = kornia.utils.image_to_tensor(img_bgr, keepdim=False).to(device, dtype=torch.float32)
+        
+        # 2. Extract B, G, R channels
+        b = img_t[:, 0:1, :, :]
+        g = img_t[:, 1:2, :, :]
+        r = img_t[:, 2:3, :, :]
+        
+        # 3. Build Rust Mask
+        ratio = r / (g + b + 1.0)
+        mean_r = ratio.mean()
+        mask = torch.clamp((ratio - mean_r) / mean_r, 0.0, 1.0)
+        mask_blurred = kornia.filters.gaussian_blur2d(mask, (7, 7), (2.0, 2.0))
+        
+        # 4. Greyscale & CLAHE
+        grey_t = kornia.color.bgr_to_grayscale(img_t)
+        # Kornia equalize_clahe expects tensor in [0, 1] range
+        grey_t_norm = grey_t / 255.0
+        grey_clahe = kornia.enhance.equalize_clahe(grey_t_norm, clip_limit=3.0, grid_size=(8, 8))
+        grey_clahe = grey_clahe * 255.0
+        
+        # 5. Apply rust darkening
+        dark_factor = 1.0 - mask_blurred * strength
+        result_t = torch.clamp(grey_clahe * dark_factor, 0.0, 255.0)
+        
+        # 6. Convert back to 3-channel BGR
+        result_bgr_t = result_t.repeat(1, 3, 1, 1)
+        
+        # 7. Move back to CPU and convert to numpy uint8
+        result_np = kornia.utils.tensor_to_image(result_bgr_t.byte())
+        return result_np
 
 
 def select_save_mode() -> str:
@@ -106,27 +162,12 @@ class BaslerCamera:
             raise ImportError("pypylon is not installed. Run: pip install pypylon")
         
         # Load configuration
-        self.config = self._load_config(config_path)
+        self.config = load_system_config(config_path).camera
         self.camera = None
         self.converter = None
         self._streaming = False   # True when continuous grab is active (e.g. defect_detector)
         
-    def _load_config(self, config_path: str) -> dict:
-        """Load camera configuration from JSON file"""
-        default_config = {
-            "exposure_time_us": 15000,
-            "gain_db": 0,
-            "pixel_format": "Mono8",
-            "trigger_mode": "Software",
-            "timeout_ms": 5000
-        }
-        
-        if config_path and os.path.exists(config_path):
-            with open(config_path, 'r') as f:
-                full_config = json.load(f)
-                return full_config.get('camera', default_config)
-        
-        return default_config
+
         
     def connect(self) -> bool:
         """Connect to the first available Basler camera"""
@@ -157,15 +198,15 @@ class BaslerCamera:
         try:
             # Exposure time (microseconds)
             if self.camera.ExposureTime.IsWritable():
-                self.camera.ExposureTime.SetValue(self.config['exposure_time_us'])
+                self.camera.ExposureTime.SetValue(self.config.exposure_time_us)
             
             # Gain (dB)
             if self.camera.Gain.IsWritable():
-                self.camera.Gain.SetValue(self.config['gain_db'])
+                self.camera.Gain.SetValue(self.config.gain_db)
             
             print(f"Camera settings applied:")
-            print(f"  - Exposure: {self.config['exposure_time_us']} µs")
-            print(f"  - Gain: {self.config['gain_db']} dB")
+            print(f"  - Exposure: {self.config.exposure_time_us} µs")
+            print(f"  - Gain: {self.config.gain_db} dB")
             
         except Exception as e:
             print(f"Warning: Could not apply all settings: {e}")
@@ -189,7 +230,7 @@ class BaslerCamera:
                 self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
             
             grab_result = self.camera.RetrieveResult(
-                self.config['timeout_ms'],
+                self.config.timeout_ms,
                 pylon.TimeoutHandling_ThrowException
             )
             
@@ -254,7 +295,7 @@ class BaslerCamera:
         if image is None:
             return None
         
-        # Create output directory
+        # Create output directory 
         save_dir = Path(output_dir) / label
         save_dir.mkdir(parents=True, exist_ok=True)
         
@@ -290,7 +331,7 @@ class MockCamera:
     """Mock camera for testing without hardware"""
     
     def __init__(self, config_path: str = None):
-        self.config = {"exposure_time_us": 15000, "gain_db": 0}
+        self.config = load_system_config(config_path).camera
         print("Using MockCamera (no hardware connected)")
     
     def connect(self) -> bool:
